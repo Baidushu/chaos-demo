@@ -1,0 +1,15 @@
+baseline_model: "local-baseline-agent"
+candidate_model: "local-candidate-agent"
+judge:
+  enabled: true
+  provider: "ollama"
+  model: "qwen2.5:7b"
+  endpoint: "http://localhost:11434/api/generate"
+  sample_rate: 0.2
+gate:
+  tool_selection_accuracy_min: 0.85
+  arg_accuracy_min: 0.80
+  avg_tool_calls_per_task_max: 3.5
+  retry_rate_max: 0.20
+  hallucination_rate_max: 0.10
+  planner_invalid_rate_max: 0.15

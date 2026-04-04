@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# pytest
+.pytest_cache/
+
+# Local / generated run artifacts
+reports/
+agent-eval/reports/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 文档不入库，只要代码
+*.md

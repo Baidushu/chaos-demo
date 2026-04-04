@@ -1,0 +1,54 @@
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RATE_LIMIT_PER_SEC=80
+      - BUSINESS_TIMEOUT_MS=45
+      - BREAKER_FAIL_THRESHOLD=8
+      - BREAKER_WINDOW_SEC=10
+      - BREAKER_OPEN_SEC=8
+      - ENABLE_RESILIENCE=true
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      - redis
+  app_baseline:
+    build: .
+    ports:
+      - "5001:5000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ENABLE_RESILIENCE=false
+    depends_on:
+      - redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
