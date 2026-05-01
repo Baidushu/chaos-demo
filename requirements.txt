@@ -1,4 +1,5 @@
-flask
-prometheus-client
-gunicorn
-redis
+# 运行 app / Docker 镜像（见 Dockerfile）
+flask>=3.0.0,<4
+prometheus-client>=0.20.0
+gunicorn>=22.0.0
+redis>=5.0.0

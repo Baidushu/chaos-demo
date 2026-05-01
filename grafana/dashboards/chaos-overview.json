@@ -125,6 +125,68 @@
       ],
       "title": "Degraded / Rate-Limited (5m)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum by (job) (increase(orders_circuit_open_total[5m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (job) (increase(orders_timeout_total[5m]))",
+          "refId": "B"
+        }
+      ],
+      "title": "Circuit Open / Timeout Events (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum by (job) (increase(orders_rejected_total[5m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (job) (increase(orders_created_total[5m]))",
+          "refId": "B"
+        }
+      ],
+      "title": "Orders Rejected vs Created (5m)",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",

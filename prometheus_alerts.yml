@@ -1,0 +1,30 @@
+# 示例告警（Prometheus 规则文件；未部署 Alertmanager 时仅在 Prometheus /alerts 页可见）
+# 与 app.py 中 prometheus_client 指标名一致
+groups:
+  - name: chaos-demo-orders
+    rules:
+      - alert: AppHttp5xxRateElevated
+        expr: sum(rate(http_request_errors_total[5m])) > 0.15
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "5xx 错误率相对偏高（per-second 计数尺度见表达式）"
+          description: "sum(rate(http_request_errors_total[5m])) 超过 0.15 /s 持续 2m"
+
+      - alert: AppRateLimitedSustained
+        expr: sum(rate(orders_rate_limited_total[5m])) > 0.3
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "限流订单速率持续较高"
+          description: "需结合 RATE_LIMIT_PER_SEC 与压测场景理解"
+
+      - alert: AppOrderDegradedSustained
+        expr: sum(rate(orders_degraded_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "202 降级/排队类响应速率偏高（熔断或超时保护）"

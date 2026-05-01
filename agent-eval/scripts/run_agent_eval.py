@@ -4,6 +4,7 @@ import os
 import random
 import re
 import time
+import urllib.error
 from pathlib import Path
 from urllib import request
 
@@ -264,6 +265,26 @@ def execute_plan(case, client: ToolsClient):
     }
 
 
+def preflight_order_service(base_url: str) -> None:
+    if os.getenv("SKIP_TOOLS_HEALTH_CHECK", "").strip().lower() in ("1", "true", "yes", "on"):
+        return
+    url = base_url.rstrip("/") + "/healthz"
+    try:
+        req = request.Request(url, method="GET")
+        with request.urlopen(req, timeout=8) as resp:
+            if int(resp.getcode()) != 200:
+                raise SystemExit(
+                    f"Order service {url} returned {resp.getcode()}, expected 200. "
+                    "Start `docker compose up -d` and wait, or set SKIP_TOOLS_HEALTH_CHECK=1."
+                )
+    except urllib.error.URLError as e:
+        raise SystemExit(
+            f"Cannot reach order service at {url} (TOOLS_BASE_URL). "
+            "Start the stack, then retry; or set SKIP_TOOLS_HEALTH_CHECK=1 for offline runs.\n"
+            f"  ({e})"
+        ) from e
+
+
 def load_cases():
     cases = []
     with DATA_PATH.open("r", encoding="utf-8") as f:
@@ -285,8 +306,10 @@ def parse_args():
 def main():
     args = parse_args()
     random.seed(int(os.getenv("EVAL_SEED", "42")))
+    base = os.getenv("TOOLS_BASE_URL", "http://127.0.0.1:5000")
+    preflight_order_service(base)
     client = ToolsClient(
-        base_url=os.getenv("TOOLS_BASE_URL", "http://127.0.0.1:5000"),
+        base_url=base,
         chaos_mode=args.chaos,
         fail_rate=args.fail_rate,
         latency_ms=args.latency_ms,

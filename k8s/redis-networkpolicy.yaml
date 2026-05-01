@@ -1,18 +1,29 @@
+# ============================================================
+# NetworkPolicy：仅允许 app Pod 访问 Redis
+# 面试要点：
+#   - NetworkPolicy 是 K8s 的网络访问控制（L4）
+#   - 默认 K8s 不限制 Pod 间通信，需要显式声明
+#   - podSelector + ingress 精确控制来源和端口
+#   - 与 fault2（隔离 Redis）配合演示混沌实验
+# ============================================================
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: redis-only-allow-app
 spec:
+  # 选择 Redis Pod：只对带 app.kubernetes.io/name=redis 标签的 Pod 生效
   podSelector:
     matchLabels:
       app.kubernetes.io/name: redis
+  # 只控制入方向（Ingress），不控制出方向
   policyTypes:
     - Ingress
   ingress:
     - from:
+        # 只允许来自 app Pod 的流量（通过标签选择）
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: app
       ports:
         - protocol: TCP
-          port: 6379
+          port: 6379    # Redis 默认端口

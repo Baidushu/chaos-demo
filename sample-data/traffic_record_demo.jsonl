@@ -1,0 +1,3 @@
+﻿{"ts": 1, "method": "POST", "path": "/order", "query": "", "headers": {"Content-Type": "application/json", "X-Idempotency-Key": "demo-replay-001"}, "body": {"item_id": "sku-1", "quantity": 1}, "status": 201}
+{"ts": 2, "method": "POST", "path": "/order", "query": "", "headers": {"Content-Type": "application/json", "X-Idempotency-Key": "demo-replay-002"}, "body": {"item_id": "sku-2", "quantity": 2}, "status": 201}
+{"ts": 3, "method": "POST", "path": "/order", "query": "", "headers": {"Content-Type": "application/json", "X-Idempotency-Key": "demo-replay-003"}, "body": {"item_id": "sku-3", "quantity": 1}, "status": 201}

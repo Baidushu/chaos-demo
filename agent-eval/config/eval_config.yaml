@@ -1,5 +1,6 @@
 baseline_model: "local-baseline-agent"
 candidate_model: "local-candidate-agent"
+#判官配置
 judge:
   enabled: true
   provider: "ollama"
@@ -7,9 +8,15 @@ judge:
   endpoint: "http://localhost:11434/api/generate"
   sample_rate: 0.2
 gate:
+  #工具选择准确率
   tool_selection_accuracy_min: 0.85
+  #参数准确率
   arg_accuracy_min: 0.80
+  #平均工具调用次数
   avg_tool_calls_per_task_max: 3.5
+  #重试率
   retry_rate_max: 0.20
+  #幻觉率
   hallucination_rate_max: 0.10
+  #计划器无效率
   planner_invalid_rate_max: 0.15

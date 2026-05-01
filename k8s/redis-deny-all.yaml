@@ -1,3 +1,11 @@
+# ============================================================
+# NetworkPolicy：拒绝所有到 Redis 的入站流量（混沌实验用）
+# 面试要点：
+#   - ingress: [] 表示拒绝所有入站连接
+#   - 模拟 Redis 网络隔离故障，观察应用降级行为
+#   - 配合 fault2-on / fault2-off 切换
+#   - 体现实验可逆性：注入故障后可恢复
+# ============================================================
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -8,4 +16,4 @@ spec:
       app.kubernetes.io/name: redis
   policyTypes:
     - Ingress
-  ingress: []
+  ingress: []           # 空列表 = 拒绝所有入站流量

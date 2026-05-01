@@ -12,26 +12,40 @@ RUN_SCRIPT = ROOT / "scripts" / "run_agent_eval.py"
 SCORE_SCRIPT = ROOT / "scripts" / "score_agent_eval.py"
 GATE_SCRIPT = ROOT / "scripts" / "gate_agent_eval.py"
 REPORT_PATH = ROOT / "reports" / "agent_eval_latest.json"
+RAW_REPORT_PATH = ROOT / "reports" / "agent_raw_latest.json"
 COMPARE_JSON = ROOT / "reports" / "chaos_compare_latest.json"
 COMPARE_MD = ROOT / "reports" / "chaos_compare_latest.md"
 
+# 子进程防挂起（大模型/网络异常时仍可在 CI 内失败，默认 20 分钟）
+_CHAOS_SUBPROC_TIMEOUT = int(os.environ.get("CHAOS_SUBPROC_TIMEOUT_SEC", "1200"))
+
 
 def run_cmd(args):
-    proc = subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-        env=os.environ.copy(),
-    )
+    try:
+        proc = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            env=os.environ.copy(),
+            timeout=_CHAOS_SUBPROC_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as e:
+        print(getattr(e, "stdout", "") or "", file=sys.stderr)
+        print(getattr(e, "stderr", "") or "", file=sys.stderr)
+        raise RuntimeError(
+            f"Command timed out after {_CHAOS_SUBPROC_TIMEOUT}s (set CHAOS_SUBPROC_TIMEOUT_SEC): "
+            f"{' '.join(args)}"
+        ) from e
     if proc.returncode != 0:
         print(proc.stdout)
         print(proc.stderr)
-        raise RuntimeError(f"Command failed: {' '.join(args)}")
+        raise RuntimeError(f"Command failed (exit {proc.returncode}): {' '.join(args)}")
     return proc.stdout.strip()
 
 
 def run_one(mode: str, fail_rate: float = 0.0, latency_ms: int = 0):
+    #运行一次评测，mode：故障模式，fail_rate：失败率，latency_ms：延迟毫秒
     run_cmd(
         [
             sys.executable,
@@ -44,9 +58,11 @@ def run_one(mode: str, fail_rate: float = 0.0, latency_ms: int = 0):
             str(latency_ms),
         ]
     )
+    #评分
     run_cmd([sys.executable, str(SCORE_SCRIPT)])
 
     gate_ok = True
+    #门禁
     try:
         run_cmd([sys.executable, str(GATE_SCRIPT)])
     except Exception:
@@ -54,6 +70,8 @@ def run_one(mode: str, fail_rate: float = 0.0, latency_ms: int = 0):
 
     with REPORT_PATH.open("r", encoding="utf-8") as f:
         data = json.load(f)
+    top_k = int(os.getenv("CHAOS_TOP_TOKEN_CASES", "3"))
+    data["top_token_cases"] = load_top_token_cases(top_k=top_k)
     data["gate_pass"] = gate_ok
     return data
 
@@ -61,7 +79,7 @@ def run_one(mode: str, fail_rate: float = 0.0, latency_ms: int = 0):
 def pct(v):
     return f"{v * 100:.2f}%"
 
-
+#Token 监控
 def token_surge_ratio(baseline_tokens: float, chaos_tokens: float) -> float:
     if baseline_tokens <= 0:
         return 0.0
@@ -123,6 +141,41 @@ def _row_opt(name, baseline_val, chaos_val, delta_val):
     return f"| {name} | {fmt_cell(baseline_val)} | {fmt_cell(chaos_val)} | {fmt_delta(delta_val)} |"
 
 
+def _trim_text(s: str, max_len: int = 80):
+    s = str(s or "").replace("\n", " ")
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
+
+
+def load_top_token_cases(top_k: int = 3):
+    if top_k <= 0:
+        return []
+    try:
+        with RAW_REPORT_PATH.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return []
+    cases = raw.get("cases", [])
+    if not isinstance(cases, list):
+        return []
+    ranked = sorted(cases, key=lambda c: float(c.get("token_usage", 0) or 0), reverse=True)
+    out = []
+    for c in ranked[:top_k]:
+        out.append(
+            {
+                "id": c.get("id"),
+                "category": c.get("category"),
+                "token_usage": float(c.get("token_usage", 0) or 0),
+                "retry_count": int(c.get("retry_count", 0) or 0),
+                "called_tools": c.get("called_tools", []),
+                "input": _trim_text(c.get("input", ""), 120),
+                "final_response": _trim_text(c.get("final_response", ""), 120),
+            }
+        )
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare no-chaos vs mixed-chaos agent eval.")
     parser.add_argument(
@@ -133,18 +186,25 @@ def main():
     args = parser.parse_args()
 
     token_surge_max = float(os.getenv("CHAOS_TOKEN_SURGE_MAX", "0.30"))
+    token_max_per_task_max = float(os.getenv("CHAOS_TOKEN_MAX_PER_TASK_MAX", "500"))
+    token_p99_per_task_max = float(os.getenv("CHAOS_TOKEN_P99_PER_TASK_MAX", "300"))
     retry_surge_max = float(os.getenv("CHAOS_RETRY_SURGE_MAX", "0.25"))
     fail_path_surge_max = float(os.getenv("CHAOS_FAIL_PATH_TOKEN_SURGE_MAX", "0.50"))
     retry_path_surge_max = float(os.getenv("CHAOS_RETRY_PATH_TOKEN_SURGE_MAX", "0.60"))
     # 小样本（如 10 条）下仅 1 条重试时重试税方差大，默认 0.60 减少误杀；可收紧为 0.50
     retry_tax_max = float(os.getenv("CHAOS_RETRY_TAX_MAX", "0.60"))
-
+    #运行基线和混合故障场景
     baseline = run_one("none", 0.0, 0)
+    #混沌组：混合麻烦（mixed），45%的请求会失败，每个请求延迟 180ms
     chaos = run_one("mixed", 0.45, 180)
 
     t_ratio = token_surge_ratio(baseline["avg_token_per_task"], chaos["avg_token_per_task"])
+    chaos_max_token = float(chaos.get("max_token_per_task") or 0.0)
+    chaos_p99_token = float(chaos.get("p99_token_per_task") or 0.0)
     r_surge = chaos["retry_rate"] - baseline["retry_rate"]
     token_gate_pass = t_ratio <= token_surge_max
+    token_max_gate_pass = chaos_max_token <= token_max_per_task_max
+    token_p99_gate_pass = chaos_p99_token <= token_p99_per_task_max
     retry_gate_pass = r_surge <= retry_surge_max
 
     bf = baseline.get("avg_token_rule_fail")
@@ -185,6 +245,8 @@ def main():
 
     token_black_hole_gate_pass = (
         token_gate_pass
+        and token_max_gate_pass
+        and token_p99_gate_pass
         and retry_gate_pass
         and fail_path_gate_pass
         and retry_path_gate_pass
@@ -217,6 +279,12 @@ def main():
             "token_surge_ratio": t_ratio,
             "token_surge_max": token_surge_max,
             "token_surge_pass": token_gate_pass,
+            "chaos_max_token_per_task": chaos_max_token,
+            "token_max_per_task_max": token_max_per_task_max,
+            "token_max_per_task_pass": token_max_gate_pass,
+            "chaos_p99_token_per_task": chaos_p99_token,
+            "token_p99_per_task_max": token_p99_per_task_max,
+            "token_p99_per_task_pass": token_p99_gate_pass,
             "retry_rate_surge": r_surge,
             "retry_surge_max": retry_surge_max,
             "retry_surge_pass": retry_gate_pass,
@@ -250,6 +318,10 @@ def main():
         f"| Retry Rate | {pct(baseline['retry_rate'])} | {pct(chaos['retry_rate'])} | {pct(result['delta']['retry_rate'])} |",
         f"| Avg Tool Calls | {baseline['avg_tool_calls_per_task']:.2f} | {chaos['avg_tool_calls_per_task']:.2f} | {result['delta']['avg_tool_calls_per_task']:+.2f} |",
         f"| Avg Token/Task | {baseline['avg_token_per_task']:.1f} | {chaos['avg_token_per_task']:.1f} | {result['delta']['avg_token_per_task']:+.1f} |",
+        f"| Max Token/Task | {float(baseline.get('max_token_per_task') or 0):.1f} | {chaos_max_token:.1f} | "
+        f"{(chaos_max_token - float(baseline.get('max_token_per_task') or 0)):+.1f} |",
+        f"| P99 Token/Task | {float(baseline.get('p99_token_per_task') or 0):.1f} | {chaos_p99_token:.1f} | "
+        f"{(chaos_p99_token - float(baseline.get('p99_token_per_task') or 0)):+.1f} |",
         f"| Hallucination Rate | {pct(baseline['hallucination_rate'])} | {pct(chaos['hallucination_rate'])} | {pct(result['delta']['hallucination_rate'])} |",
         f"| Planner Invalid Rate | {pct(baseline.get('planner_invalid_rate', 0))} | {pct(chaos.get('planner_invalid_rate', 0))} | {pct(result['delta']['planner_invalid_rate'])} |",
         "",
@@ -283,6 +355,10 @@ def main():
         "",
         f"- token_surge_ratio: {t_ratio:.2%} (max allowed: {pct(token_surge_max)})",
         f"- token_surge_pass: {token_gate_pass}",
+        f"- chaos_max_token_per_task: {chaos_max_token:.1f} (max allowed: {token_max_per_task_max:.1f})",
+        f"- token_max_per_task_pass: {token_max_gate_pass}",
+        f"- chaos_p99_token_per_task: {chaos_p99_token:.1f} (max allowed: {token_p99_per_task_max:.1f})",
+        f"- token_p99_per_task_pass: {token_p99_gate_pass}",
         f"- retry_rate_surge: {pct(r_surge)} (max allowed: {pct(retry_surge_max)})",
         f"- retry_surge_pass: {retry_gate_pass}",
         f"- fail_path_token_surge_ratio: "
@@ -301,7 +377,36 @@ def main():
         f"{('N/A' if baseline_retry_tax is None else f'{baseline_retry_tax:.2%}')}",
         f"- retry_tax_pass: {retry_tax_gate_pass}",
         f"- **token_black_hole_gate_pass: {token_black_hole_gate_pass}**",
+        "",
+        "## Top token cases (for debugging)",
+        "",
+        "### No Chaos",
     ]
+    base_top = baseline.get("top_token_cases", [])
+    chaos_top = chaos.get("top_token_cases", [])
+    if not base_top:
+        md.append("- No cases.")
+    else:
+        md.append("| # | case_id | token | retry | tools | input |")
+        md.append("|---:|---|---:|---:|---|---|")
+        for i, c in enumerate(base_top, start=1):
+            tools = ",".join(c.get("called_tools", []))
+            md.append(
+                f"| {i} | {c.get('id','')} | {float(c.get('token_usage', 0)):.1f} | "
+                f"{int(c.get('retry_count', 0))} | {tools} | {c.get('input','')} |"
+            )
+    md.extend(["", "### Mixed Chaos"])
+    if not chaos_top:
+        md.append("- No cases.")
+    else:
+        md.append("| # | case_id | token | retry | tools | input |")
+        md.append("|---:|---|---:|---:|---|---|")
+        for i, c in enumerate(chaos_top, start=1):
+            tools = ",".join(c.get("called_tools", []))
+            md.append(
+                f"| {i} | {c.get('id','')} | {float(c.get('token_usage', 0)):.1f} | "
+                f"{int(c.get('retry_count', 0))} | {tools} | {c.get('input','')} |"
+            )
     with COMPARE_MD.open("w", encoding="utf-8") as f:
         f.write("\n".join(md))
 

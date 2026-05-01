@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import json
+import os
 import random
 import time
 import urllib.error
@@ -21,12 +24,18 @@ class ToolsClient:
         chaos_mode: str = "none",
         fail_rate: float = 0.0,
         latency_ms: int = 0,
+        http_timeout_sec: float | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.created_order_ids = []
         self.chaos_mode = chaos_mode
         self.fail_rate = fail_rate
         self.latency_ms = latency_ms
+        if http_timeout_sec is not None:
+            self._http_timeout = float(http_timeout_sec)
+        else:
+            # 含 chaos 注入延迟、尾延迟、容器冷启动，默认略大于原 5s
+            self._http_timeout = float(os.environ.get("TOOLS_HTTP_TIMEOUT_SEC", "12"))
 
     def _maybe_inject_fault(self, op_name: str):
         if self.chaos_mode in ("latency", "mixed") and self.latency_ms > 0:
@@ -49,15 +58,20 @@ class ToolsClient:
             headers={
                 "Content-Type": "application/json",
                 "X-Idempotency-Key": str(uuid.uuid4()),
+                "X-Request-Id": f"ae-{uuid.uuid4().hex[:12]}",
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=self._http_timeout) as resp:
             return resp.getcode(), json.loads(resp.read().decode("utf-8"))
 
     def _get_json(self, path: str):
-        req = urllib.request.Request(f"{self.base_url}{path}", method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        req = urllib.request.Request(
+            f"{self.base_url}{path}",
+            headers={"X-Request-Id": f"ae-{uuid.uuid4().hex[:12]}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=self._http_timeout) as resp:
             return resp.getcode(), json.loads(resp.read().decode("utf-8"))
 
     def place_order(self, item_name: str, quantity: int, address: str):

@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPORT_JSON = Path("reports/traffic_replay_latest.json")
 REPORT_MD = Path("reports/traffic_replay_latest.md")
+BUILTIN_SAMPLE_PATH = Path("sample-data/traffic_record_demo.jsonl")
 
 
 def send(base_url: str, event: dict, timeout: float):
@@ -15,7 +16,6 @@ def send(base_url: str, event: dict, timeout: float):
     query = str(event.get("query", "") or "")
     headers = dict(event.get("headers", {}) or {})
     body = event.get("body")
-
     if not path.startswith("/"):
         path = "/" + path
     url = base_url.rstrip("/") + path
@@ -24,7 +24,6 @@ def send(base_url: str, event: dict, timeout: float):
             url += query
         else:
             url += "?" + query
-
     data = None
     if body is not None and method in {"POST", "PUT", "PATCH"}:
         data = json.dumps(body).encode("utf-8")
@@ -44,19 +43,26 @@ def send(base_url: str, event: dict, timeout: float):
     return status, text
 
 
-def load_events(path: Path):
-    events = []
+def iter_events(path: Path):
     if not path.exists():
-        return events
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
+        return
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def resolve_input_path(requested_path: Path, allow_builtin_sample: bool = True) -> tuple[Path, bool]:
+    if requested_path.exists() and requested_path.stat().st_size > 0:
+        return requested_path, False
+    if allow_builtin_sample and BUILTIN_SAMPLE_PATH.exists() and BUILTIN_SAMPLE_PATH.stat().st_size > 0:
+        return BUILTIN_SAMPLE_PATH, True
+    return requested_path, False
 
 
 def build_path_stats(rows: list):
@@ -89,20 +95,28 @@ def build_path_stats(rows: list):
     return out
 
 
-def write_reports(base_url: str, input_path: str, loaded: int, replayed: int, rows: list):
+def write_reports(
+    *,
+    base_url: str,
+    requested_input: str,
+    effective_input: str,
+    loaded: int,
+    replayed: int,
+    rows: list,
+    used_builtin_sample: bool,
+):
     REPORT_JSON.parent.mkdir(parents=True, exist_ok=True)
     ok = sum(1 for r in rows if 200 <= r.get("status", 0) < 400)
     bad = replayed - ok
-    avg_ms = 0.0
-    if rows:
-        avg_ms = sum(float(r.get("elapsed_ms", 0.0)) for r in rows) / len(rows)
-
+    avg_ms = sum(float(r.get("elapsed_ms", 0.0)) for r in rows) / len(rows) if rows else 0.0
     path_stats = build_path_stats(rows)
 
     report = {
         "generated_at": int(time.time()),
         "base_url": base_url,
-        "input": input_path,
+        "input_requested": requested_input,
+        "input_effective": effective_input,
+        "used_builtin_sample": used_builtin_sample,
         "loaded": loaded,
         "replayed": replayed,
         "ok": ok,
@@ -114,20 +128,23 @@ def write_reports(base_url: str, input_path: str, loaded: int, replayed: int, ro
     }
     REPORT_JSON.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    lines = []
-    lines.append("# Traffic Replay Report (Local Demo)")
-    lines.append("")
-    lines.append(f"- target: `{base_url}`")
-    lines.append(f"- input: `{input_path}`")
-    lines.append(f"- loaded: `{loaded}`")
-    lines.append(f"- replayed: `{replayed}`")
-    lines.append(f"- success: `{ok}`")
-    lines.append(f"- failed: `{bad}`")
-    lines.append(f"- success_rate: `{(ok / replayed * 100):.2f}%`" if replayed else "- success_rate: `0.00%`")
-    lines.append(f"- avg_elapsed_ms: `{avg_ms:.1f}`")
-    lines.append("")
-    lines.append("## Path Stats")
-    lines.append("")
+    lines = [
+        "# Traffic Replay Report (Local Demo)",
+        "",
+        f"- target: `{base_url}`",
+        f"- input_requested: `{requested_input}`",
+        f"- input_effective: `{effective_input}`",
+        f"- used_builtin_sample: `{used_builtin_sample}`",
+        f"- loaded: `{loaded}`",
+        f"- replayed: `{replayed}`",
+        f"- success: `{ok}`",
+        f"- failed: `{bad}`",
+        f"- success_rate: `{(ok / replayed * 100):.2f}%`" if replayed else "- success_rate: `0.00%`",
+        f"- avg_elapsed_ms: `{avg_ms:.1f}`",
+        "",
+        "## Path Stats",
+        "",
+    ]
     if not path_stats:
         lines.append("- No path stats.")
     else:
@@ -138,9 +155,7 @@ def write_reports(base_url: str, input_path: str, loaded: int, replayed: int, ro
                 f"| {p['path']} | {p['count']} | {p['ok']} | {p['bad']} | "
                 f"{p['success_rate'] * 100:.2f}% | {p['avg_elapsed_ms']:.1f} |"
             )
-    lines.append("")
-    lines.append("## Sample Results")
-    lines.append("")
+    lines.extend(["", "## Sample Results", ""])
     if not rows:
         lines.append("- No replay rows.")
     else:
@@ -162,36 +177,33 @@ def main():
     parser.add_argument("--limit", type=int, default=100, help="Max events to replay")
     parser.add_argument("--sleep-ms", type=int, default=30, help="Sleep between events")
     parser.add_argument("--timeout", type=float, default=5.0, help="HTTP timeout seconds")
+    parser.add_argument(
+        "--no-builtin-sample",
+        action="store_true",
+        help="Do not fall back to bundled sample traffic when input file is missing or empty",
+    )
     args = parser.parse_args()
 
-    events = load_events(Path(args.input))
-    if not events:
-        print(f"[replay_traffic] no events found: {args.input}")
-        write_reports(
-            base_url=args.base_url,
-            input_path=args.input,
-            loaded=0,
-            replayed=0,
-            rows=[],
-        )
-        print(f"[replay_traffic] saved: {REPORT_JSON}")
-        print(f"[replay_traffic] saved: {REPORT_MD}")
-        return
-
-    total = min(len(events), max(args.limit, 0))
-    ok = 0
-    bad = 0
+    requested_input_path = Path(args.input)
+    input_path, used_builtin_sample = resolve_input_path(
+        requested_input_path, allow_builtin_sample=not args.no_builtin_sample
+    )
+    total_limit = max(args.limit, 0)
+    loaded = 0
+    replayed = 0
     rows = []
-    print(f"[replay_traffic] loaded={len(events)} replay={total} target={args.base_url}")
 
-    for i, event in enumerate(events[:total], start=1):
+    if used_builtin_sample:
+        print(f"[replay_traffic] requested input empty/missing, using builtin sample: {input_path}")
+
+    for event in iter_events(input_path):
+        loaded += 1
+        if replayed >= total_limit:
+            continue
+        replayed += 1
         started = time.perf_counter()
         status, _ = send(args.base_url, event, timeout=args.timeout)
         elapsed_ms = (time.perf_counter() - started) * 1000
-        if 200 <= status < 400:
-            ok += 1
-        else:
-            bad += 1
         rows.append(
             {
                 "method": event.get("method"),
@@ -200,17 +212,36 @@ def main():
                 "elapsed_ms": elapsed_ms,
             }
         )
-        print(f"[replay_traffic] {i}/{total} {event.get('method')} {event.get('path')} -> {status}")
-        if args.sleep_ms > 0 and i < total:
+        print(f"[replay_traffic] {replayed}/{total_limit} {event.get('method')} {event.get('path')} -> {status}")
+        if args.sleep_ms > 0 and replayed < total_limit:
             time.sleep(args.sleep_ms / 1000)
 
+    if loaded == 0:
+        print(f"[replay_traffic] no events found: {args.input}")
+        write_reports(
+            base_url=args.base_url,
+            requested_input=args.input,
+            effective_input=str(input_path),
+            loaded=0,
+            replayed=0,
+            rows=[],
+            used_builtin_sample=used_builtin_sample,
+        )
+        print(f"[replay_traffic] saved: {REPORT_JSON}")
+        print(f"[replay_traffic] saved: {REPORT_MD}")
+        return
+
+    ok = sum(1 for r in rows if 200 <= r.get("status", 0) < 400)
+    bad = replayed - ok
     print(f"[replay_traffic] done ok={ok} bad={bad}")
     write_reports(
         base_url=args.base_url,
-        input_path=args.input,
-        loaded=len(events),
-        replayed=total,
+        requested_input=args.input,
+        effective_input=str(input_path),
+        loaded=loaded,
+        replayed=replayed,
         rows=rows,
+        used_builtin_sample=used_builtin_sample,
     )
     print(f"[replay_traffic] saved: {REPORT_JSON}")
     print(f"[replay_traffic] saved: {REPORT_MD}")

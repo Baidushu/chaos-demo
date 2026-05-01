@@ -22,8 +22,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Unit tests
-        run: pytest -q
+      - name: Pytest (smoke, fail-fast)
+        run: pytest tests/ -m smoke -q
+
+      - name: Pytest (full)
+        run: pytest tests/ -q
 
       - name: Start services
         run: docker compose up --build -d
@@ -40,6 +43,10 @@ jobs:
           exit 1
 
       - name: Benchmark compare
+        env:
+          BENCHMARK_WARMUP: "20"
+          BENCHMARK_SEED: "7"
+          BENCHMARK_RUNS: "3"
         run: python benchmark_compare.py
 
       - name: Security scan gate
@@ -66,6 +73,8 @@ jobs:
           name: benchmark-report
           path: |
             reports/benchmark_latest.json
+            reports/benchmark_trend_latest.json
+            reports/benchmark_trend_latest.md
             reports/security_scan_latest.json
             reports/security_scan_latest.md
             reports/traffic_replay_latest.json

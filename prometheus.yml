@@ -1,6 +1,10 @@
 global:
   scrape_interval: 5s
 
+# 同目录挂载的告警规则（见 docker-compose prometheus volumes）
+rule_files:
+  - "/etc/prometheus/prometheus_alerts.yml"
+
 scrape_configs:
   - job_name: "chaos-demo-app"
     static_configs:

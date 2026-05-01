@@ -6,14 +6,17 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - RATE_LIMIT_PER_SEC=80
-      - BUSINESS_TIMEOUT_MS=45
-      - BREAKER_FAIL_THRESHOLD=8
-      - BREAKER_WINDOW_SEC=10
-      - BREAKER_OPEN_SEC=8
-      - ENABLE_RESILIENCE=true
+      - RATE_LIMIT_PER_SEC=80 #限流速率
+      - BUSINESS_TIMEOUT_MS=50 #业务超时时间
+      - BREAKER_FAIL_THRESHOLD=8 #熔断失败阈值
+      - BREAKER_WINDOW_SEC=10 #熔断窗口时间
+      - BREAKER_OPEN_SEC=8 #熔断打开时间
+      - ENABLE_RESILIENCE=true #启用熔断
+      - INVENTORY_BUSY_PROB=0.025 #库存繁忙概率
+      - ORDER_TTL_SEC=604800 #订单超时时间
+      - CIRCUIT_PROBE_TTL_SEC=30 #熔断探针超时时间
     cap_add:
-      - NET_ADMIN
+      - NET_ADMIN #允许修改网络配置,赋予了容器修改网络堆栈的权限 tc
     depends_on:
       - redis
   app_baseline:
@@ -24,6 +27,8 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - ENABLE_RESILIENCE=false
+      - ORDER_TTL_SEC=604800
+      - CIRCUIT_PROBE_TTL_SEC=30
     depends_on:
       - redis
   redis:
@@ -36,6 +41,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus_alerts.yml:/etc/prometheus/prometheus_alerts.yml:ro
     ports:
       - "9090:9090"
     depends_on:

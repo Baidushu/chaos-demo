@@ -26,6 +26,17 @@ def avg_or_none(values):
     return sum(values) / len(values)
 
 
+def percentile_or_none(values, p: float):
+    """Nearest-rank percentile for small sample sets."""
+    if not values:
+        return None
+    arr = sorted(float(v) for v in values)
+    n = len(arr)
+    rank = int(round((p / 100.0) * (n - 1)))
+    rank = max(0, min(rank, n - 1))
+    return arr[rank]
+
+
 def arg_match(expected_args, called_args):
     if not expected_args:
         return 1
@@ -177,6 +188,8 @@ def main():
         "retry_rate": sum(1 for x in retries if x > 0) / n,
         "avg_tool_calls_per_task": sum(call_counts) / n,
         "avg_token_per_task": sum(tokens) / n,
+        "max_token_per_task": max(tokens) if tokens else 0,
+        "p99_token_per_task": percentile_or_none(tokens, 99),
         "avg_token_estimated_per_task": sum(tokens_estimated) / n,
         "avg_token_llm_per_task": avg_llm,
         "ollama_token_coverage": llm_cov,
@@ -240,6 +253,8 @@ def main():
         f"- retry_rate: {result['retry_rate']:.2%}",
         f"- avg_tool_calls_per_task: {result['avg_tool_calls_per_task']:.2f}",
         f"- avg_token_per_task: {result['avg_token_per_task']:.1f}",
+        f"- max_token_per_task: {result['max_token_per_task']:.1f}",
+        f"- p99_token_per_task: {fmt_opt(result['p99_token_per_task'])}",
         f"- avg_token_estimated_per_task: {result['avg_token_estimated_per_task']:.1f}",
         f"- avg_token_llm_per_task: {avg_llm_text}",
         f"- ollama_token_coverage: {result['ollama_token_coverage']:.2%}",
