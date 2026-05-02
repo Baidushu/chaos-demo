@@ -1,6 +1,7 @@
 # 性能与行为解读（面试口径）
 
-> **定位**：在已有 **`benchmark_compare`** 与 JSON 报告的前提下，把**系统行为讲清楚**。本节是**定性结论 + trade-off 话术**，不是线上 A/B 的统计结论；与 [`AI_PROJECT_CONTEXT.md`](AI_PROJECT_CONTEXT.md) §2.1 B、§10 门禁字段一致。
+> **定位**：在已有 **`benchmark_compare`** 与 JSON 报告的前提下，把**系统行为讲清楚**。本节是**定性结论 + trade-off 话术**，不是线上 A/B 的统计结论；与 [`AI_PROJECT_CONTEXT.md`](AI_PROJECT_CONTEXT.md) §2.1 B、§10 门禁字段一致。  
+> **门禁里的「相对基线回归」与历史 trend 是否进 gate**：见全景 **§1.0**（诚实边界）。
 
 ---
 

@@ -5,7 +5,7 @@
 > **其它 `docs/*.md`**：人类导航、面试、长跑题与**工程债表**；**不**重复作为第二套技术事实，见 `docs/README.md` 分层说明。  
 > **根路径**：本文件位于 `docs/AI_PROJECT_CONTEXT.md`；下文中「根目录」指仓库根 `chaos-demo/`。  
 
-**对外叙事（面试主线）**：本仓库是 **轻量级质量工程平台（QEP）**——用 **混沌/故障注入、压测、门禁脚本与 CI** 把「不同策略与故障场景下的行为与指标」固化成可重复的评估闭环；**`agent-eval/` 为辅线扩展**（工具调用稳定性），**不是**「AI 主项目」。口述模板见根目录 [`README.md`](../README.md) 文首。测试分层与 failure model 见 [`TEST_STRATEGY.md`](TEST_STRATEGY.md)；benchmark 行为解读见 [`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md)。
+**对外叙事（面试主线）**：本仓库是 **轻量级质量工程平台（QEP）**——用 **混沌/故障注入、压测、门禁脚本与 CI** 把「不同策略与故障场景下的行为与指标」固化成可重复的评估闭环；**`agent-eval/` 为辅线扩展**（工具调用稳定性），**不是**「AI 主项目」。口述模板见根目录 [`README.md`](../README.md) 文首；**「问题→解决」、CI 决策链、降权话术**见 **§1.0**。测试分层与 failure model 见 [`TEST_STRATEGY.md`](TEST_STRATEGY.md)；benchmark 行为解读见 [`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md)。
 
 ---
 
@@ -14,6 +14,55 @@
 - **平台主线（质量工程）**：在可部署的订单服务上，把 **韧性治理**（限流、熔断、超时、幂等、可观测、流量录制）与 **HTTP 故障注入**（可建模的失败）串成可测对象；用 **压测对照**（治理 vs 基线）、**安全扫描** 与 **质量门禁** 把指标与阈值自动化，支撑「是否可发」的**工程化判断**（教学/演示量级）。  
 - **服务载体**：Flask + Redis 实现订单语义与治理钩子；详见 §2.1。  
 - **扩展辅线（`agent-eval/`）**：**非核心 AI 产品**，而是一个**简单的扩展模块** —— 在 **HTTP 工具调用**路径上，用规则/可选 LLM 规划器模拟「调下单接口」等行为，结合**客户端 chaos** 做 **无故障 vs 故障** 对照与门禁，用于回答「**不稳定环境下工具调用与重试策略是否失控**」；与订单服务**进程隔离**，面试中应**降级叙述**，避免喧宾夺主。  
+
+### 1.0 面试叙事与口径（问题 → 解决 · CI · 降权）
+
+> 本节给**人类面试**：先讲**解决了什么问题**，再讲手段；技术事实仍以本文后续章节与代码为准。
+
+#### 「问题 → 解决」（不要只报「我实现了限流/熔断」）
+
+面试官要听的是 **发现或预设了什么风险**，以及 **为什么选这个手段**。可按下表口述（数值以压测报告与门禁为准，教学/演示量级）：
+
+| 现象或风险 | 你怎么知道 / 怎么证 | 引入的手段 |
+|------------|---------------------|------------|
+| **高并发下错误率、尾延迟波动大**，容易发生**过载级联** | **压测对照**（治理 **5000** vs 基线 **5001**）可重复观察 | **限流**削峰；**熔断**快速失败、避免雪崩；**超时预算** → **202** 提前降级，释放临界区 |
+| **重复请求导致重复写单** | 并发与重试场景 | **Redis 幂等**（占位 → 成功态），同 key 冲突 **409** |
+| **下游 Redis 不可用或抖动** | 单测 + 真 Redis 集成 | 限流/熔断对 Redis 异常 **fail-open**（与「业务读 Redis 失败 503」策略区分，见 §2.1） |
+| **故障场景依赖手工点、难回归** | 演示与压测里不易稳定复现「坏」 | **可编程故障注入**（见下段） |
+
+#### 可编程故障注入（从「功能」升级到「亮点」）
+
+- **一句话**：实现了一套 **可编程故障注入**：通过 **`/fault/*` HTTP API** 动态注入 **latency / drop / exception / slow_db**，故障状态落在 **Redis 键 `fault:{type}`**，带 **`TTL` / `ttl_sec`**，**到期自动恢复**，无需改代码、发版才能切场景。  
+- **结合测试**：`tests/test_fault_injection.py`、`fault_demo.py` 可把场景**固化**；**主 CI（`qa.yml`）** 当前以单测 + 压测 + gate + `chaos_compare` 为主，**故障注入能力是可插的验证钩子**——面试可讲：「可在流水线里加一步注入/清除，自动验证抗故障行为」（扩展空间如实说即可）。  
+
+#### CI 主线 = **发布决策**，不是「跑完测试图个心安」
+
+建议按顺序背：**单测**（FakeRedis，快）→ **起真实栈**（compose）→ **压测**（`benchmark_compare` → `benchmark_latest.json`）→ **安全扫描** → **`quality_gate`**（读报告，**超限则 `exit 1`**，相当于 **no-go**）→ **`chaos_compare --strict`**（辅线：工具调用在扰动下是否失控）。  
+
+**要点**：`quality_gate` 的目标是 **基于指标的合入/发布判断**，不是单纯「全绿」；详见 **§7**、**§10**。
+
+#### `agent-eval` 必须降权（面试勿当主线）
+
+- ❌ 「我做了 **AI Agent** 评估项目」  
+- ✅ 「**扩展模块**，看 **HTTP 工具调用**在不稳定条件下 **重试与失败** 是否越线；**主线仍是质量工程平台（QEP）**」。  
+
+#### 少讲 Flask 实现细节，多讲**治理切面**
+
+- 面试优先讲：**请求进入后的治理顺序**、**故障注入作用点**、**Prometheus `/metrics`**、**结构化日志**利于 **ELK/Loki**。  
+- **`before_request` / 路由注册**等见 **§2.1 A**，回答时**一句 Web 框架带过即可**，除非面试官追问实现。
+
+#### 性能回归与历史趋势（王炸说法 + 诚实边界）
+
+- **门禁已做的回归**：`quality_gate.py` 对 **protected** 相对同一次压测里的 **baseline** 校验 **p95 回归倍数**（`QUALITY_GATE_P95_REGRESSION_FACTOR_MAX` 等），并约束 **error / p99 / unstable / p95 抖动** —— **变差可 fail**。  
+- **历史归档**：`benchmark_history/` + **`benchmark_trend_latest.*`** 与**历史中位数**对比 delta，适合**讲波动、讲趋势**；**当前 `quality_gate` 不直接读取 trend 文件**（演进项：可将 trend 接入为第二道闸）。  
+
+#### 测试分层一句（对齐 [`TEST_STRATEGY.md`](TEST_STRATEGY.md)）
+
+**单测（FakeRedis）→ 接口/契约 → 系统（compose + 故障注入）→ 压测 → 质量门禁**；分层表以 `TEST_STRATEGY` 为准。  
+
+#### 结构化日志（你已具备，面试要主动说）
+
+- 服务侧 **`LOG_FORMAT=json`（默认）** 时，关键路径可输出 **JSON 行**（含 **`event`**、**`request_id`** 等），便于 **ELK/Loki** 解析与检索；见 **§2.1 A**、**§6**。  
 
 ### 1.1 近期已落地工程化（维护者速览）
 
@@ -26,7 +75,7 @@
 | **应用语义** | 建单 **202 超时**按 **`elapsed+计划时间` 与 `BUSINESS_TIMEOUT_MS` 的端到端预算**；**`X-Request-Id`** 回显；韧性关键路径 **JSON 行日志**；**`validate_resilience_config()`**（import 不 ping Redis）。 |
 | **订单与部署** | 订单在 **Redis** `order:{id}`，**`ORDER_TTL_SEC`**（compose/k8s/默认一致）；**`Dockerfile` `gunicorn --workers 2`**。 |
 | **agent-eval** | **辅线**：见 **§8**；CI 用 `rule` + `AGENT_EVAL_SKIP_JUDGE` 等**能跑、能门禁**；**`chaos_compare`** 子进程设 **`CHAOS_SUBPROC_TIMEOUT_SEC`（默认 1200s）** 防挂起。**叙事上**强调「工具调用稳定性评估」，**不要**把本仓讲成 AI 主项目。 |
-| **HTTP 故障注入** | **`chaos_service/fault_injection.py`**：活跃故障存 **Redis** 键 `fault:{type}`（`setex`）；**`http_api.before_request`** 对业务路径调用 **`apply_faults`**（`/fault` 与 `/healthz`、`/live`、`/ready`、`/metrics` **不**注入）；类型 **latency / exception / drop / slow_db**，关 **`ENABLE_FAULT_INJECTION`** 则整条链跳过。 |
+| **HTTP 故障注入** | **可编程故障注入**：`/fault/*` **HTTP 动态**注册 **`latency` / `exception` / `drop` / `slow_db`**，Redis **`fault:{type}` + TTL 自动恢复**；`http_api` 在**业务请求入口**调用 **`apply_faults`**（探活/指标/`/fault` 自身不套娃）；关 **`ENABLE_FAULT_INJECTION`** 则跳过。 |
 | **可选 LLM 辅助** | 根目录 **`llm_client.py`**（Ollama / OpenAI 兼容端点，标准库 HTTP）、**`llm_assist.py`**（CLI：`generate-tests`、`analyze-report`）；**不进 CI 主链**，无额外 pip 依赖。 |
 | **接口自动化样例** | **`api-automation-demo/`**：**独立** pytest 工程（**httpx**、**YAML** 参数化、**Allure**、重试与日志封装）；**`.github/workflows/api-automation-demo.yml`**；默认 CI **MockTransport**，设 **`API_AUTOMATION_BASE_URL`** 可对已起的 **5000** 联调。见 **§2.1 L**。 |
 
@@ -72,6 +121,7 @@
 
 | 方面 | 实现方法 |
 |------|----------|
+| **面试优先讲** | **治理与观测切面**：请求进入后的 **限流→熔断→幂等→超时预算** 顺序、**故障注入**在**业务入口**的生效点、**Prometheus** 延迟/计数、**JSON 行日志**（ELK/Loki）；**不必**展开 Flask **路由表**除非对方追问。 |
 | 分工 | `app.py` 创建 **`Flask(__name__)`**、**`redis_client`**、**`prometheus_client` 各 Counter/Histogram**、从环境读**全局配置常量**，执行 **`validate_resilience_config()`** 后由 **`http_api.register_hooks` / `register_routes(app, CTX)`** 挂路由；`CTX` 为 **`sys.modules[__name__]`**，子模块经 `ctx` 读同一套配置与客户端。 |
 | `chaos_service/http_api.py` | 注册 **`before_request` / `after_request`**、**业务路由**（建单/查单/取消/健康/指标等）；**`before_request`** 中（路径非 `/fault`、非探活/指标）调用 **`fault_injection.apply_faults`**：`drop`→**503**，`exception`→**RuntimeError**（框架转 500），`latency`/`slow_db`→**sleep** 后继续；**`/fault/*`** 路由注册在同一文件。 |
 | `chaos_service/fault_injection.py` | **`inject_fault` / `clear_fault` / `list_faults`** 等；**`apply_faults`** 返回 `drop`/`exception`/`latency` 语义供钩子处理；参数校验与 **`FAULT_*`** 上限见模块顶。 |
@@ -178,7 +228,7 @@
 | Compose | 多服务 **bridge 网络**；`app` 可带 `cap_add: NET_ADMIN` 供本仓库网络实验/演示（与上表应用逻辑无强耦合）。 |
 | 应用镜像 | **`Dockerfile`**：`gunicorn` 绑定 `0.0.0.0:5000`，**`--workers 2`（默认可调）**；**订单在 Redis** `order:{order_id}`（JSON、TTL 见 `ORDER_TTL_SEC`），多 worker **共享**同一 Redis，查单/取消与进程数一致。 |
 
-### J. HTTP 故障注入 API 与 `fault_demo.py`
+### J. 可编程 HTTP 故障注入 API 与 `fault_demo.py`
 
 | 方面 | 实现方法 |
 |------|----------|
@@ -293,9 +343,10 @@
 - **流量录制**  
   - 环境变量 `TRAFFIC_RECORD_ENABLED=true` 时，后台队列写 `TRAFFIC_RECORD_FILE` 默认 `reports/traffic_record_latest.jsonl`；**不记录**仅健康检查/指标类路径；敏感字段有简单脱敏。  
 
-- **HTTP 故障注入**（`ENABLE_FAULT_INJECTION=true` 时）  
+- **可编程 HTTP 故障注入**（`ENABLE_FAULT_INJECTION=true` 时）  
+  - **编程模型**：运维/测试通过 **`/fault/inject`** 等 API **在线**写入故障，**`/fault/clear*`** 或 **TTL 到期**关闭；无需改业务代码。  
   - 状态在 **Redis** `fault:{type}`，**TTL** 到期自动失效；**多 worker 共享**。  
-  - **`drop`**：按概率在 **`before_request`** 早返回 **503**（`ORDER_DEGRADED` 递增）。  
+  - **`drop`**：按概率在请求入口早返回 **503**（`ORDER_DEGRADED` 递增）。  
   - **`exception`**：在钩子中 **`raise RuntimeError`**（表现为 **500** 类错误路径）。  
   - **`latency` / `slow_db`**：在进业务逻辑前 **`time.sleep`**；**`slow_db`** 还可按 **`timeout_rate`** 模拟超时（内部按 **`drop`** 返回）。  
   - **`/fault/*`** 路径**不**套用注入，避免无法自恢复。  
@@ -337,6 +388,8 @@
 
 ## 7. CI 流水线（`.github/workflows/qa.yml` 摘要）
 
+**面试口径**：这条流水线本质是在做 **发布/合入决策**——最后几步读**压测与安全报告**，由 **`quality_gate`** 决定是否 **fail 掉 PR**；不是「跑完 pytest 就算过」。
+
 单 job 内顺序（与**本地**可略有工具差异，但意图一致）：
 
 1. 安装 `requirements-dev.txt`  
@@ -347,10 +400,10 @@
 6. `python benchmark_compare.py`（CI 常设 **`BENCHMARK_WARMUP`**、**`BENCHMARK_SEED`**、**`BENCHMARK_RUNS: "3"`** 等以稳态/多轮中位数）  
 7. `python security_scan.py`（`SECURITY_SCAN_BASE_URL` 等）  
 8. `python quality_gate.py`（`SECURITY_FAIL_ON` 等）  
-9. `python agent-eval/scripts/chaos_compare.py --strict`（`TOOLS_BASE_URL`、`AGENT_MODE`、`AGENT_EVAL_SKIP_JUDGE` 等）  
+9. `python agent-eval/scripts/chaos_compare.py --strict`（`TOOLS_BASE_URL`、`AGENT_MODE`、`AGENT_EVAL_SKIP_JUDGE` 等）—— **辅线**：工具调用稳定性对照，**非**「AI 主能力」叙事  
 10. 上传 `reports/` 与 `agent-eval/reports/` 部分产物为 artifact  
 
-**并行工作流**：**`api-automation-demo.yml`** 在子目录安装独立依赖并跑 **pytest + Allure**，不上主链 Docker；用于简历级「接口自动化」展示，见 **`api-automation-demo/README.md`**。
+**并行工作流**：**`api-automation-demo.yml`** 在子目录安装独立依赖并跑 **pytest + Allure**，不上主链 Docker；**接口自动化**展示用，**不参与**上述发布决策主链。
 
 **本地 `run.ps1 -Task qa`**：含 pip、**全量** pytest、bench、**Wait-AppHealthz**、scan、gate；**不**一定包含与 CI 完全相同的 smoke 分步，以脚本为准。
 
@@ -455,7 +508,8 @@
 
 ## 14. 可选补充（人类读者，**非** AI 必读）
 
-**全部 Markdown 的导航表**见 **`docs/README.md`**。面试向补完：**[`TEST_STRATEGY.md`](TEST_STRATEGY.md)**（测试分层 / failure model）、**[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md)**（压测结论表述）。**处理自动化任务、代码修改时，以本文 1–13 节为权威上下文**；其它 md 不重复当第二套事实源。  
+**全部 Markdown 的导航表**见 **`docs/README.md`**。面试向：测试分层 / failure model → **[`TEST_STRATEGY.md`](TEST_STRATEGY.md)**；压测 trade-off → **[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md)**；**问题→解决、CI 发布决策、可编程故障注入口径** → **§1.0**。  
+**处理自动化任务、代码修改时，以本文 1–13 节为权威上下文**；其它 md 不重复当第二套事实源。  
 零基础测开读者可从 **`docs/LEARNING_PLAN_0BASIS_SDET.md`** 按阶段自测推进，再回读本文对应章节。
 
 *文档版本以仓库主分支与上述文件名一致时为准；若与运行结果冲突，以当前 `app.py` 与各脚本**实际行为**为最终准绳并应回写本文。*
