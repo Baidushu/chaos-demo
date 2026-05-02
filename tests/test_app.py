@@ -7,14 +7,15 @@ import pytest
 import app as app_module
 from conftest import FakeRedis
 
-
+# 单元：order_deadline_exceeded（不经 HTTP；实现见 chaos_service.resilience）
+# 断言：budget_ms=50 时 elapsed_s + planned_s 相对毫秒预算的未超/已超边界
 def test_order_deadline_exceeded_uses_end_to_end_budget():
     assert not app_module._order_deadline_exceeded(0, 0.01, 50)
     assert not app_module._order_deadline_exceeded(0, 0.05, 50)
     assert app_module._order_deadline_exceeded(0, 0.06, 50)
     assert app_module._order_deadline_exceeded(0.04, 0.02, 50)
 
-
+# 冒烟：X-Request-Id 回显与自动生成（before_request）；先带脏值再不带头，断言规范化与新生成不串用
 @pytest.mark.smoke
 def test_x_request_id_echo_and_generated(client):
     r1 = client.get("/healthz", headers={"X-Request-Id": "  trace-abc-1  "})
@@ -23,25 +24,17 @@ def test_x_request_id_echo_and_generated(client):
     assert r2.headers.get("X-Request-Id")
     assert "trace-abc-1" not in (r2.headers.get("X-Request-Id") or "")
 
-#创建订单成功测试，用于测试创建订单是否成功
-#测试过程：
-#1. 创建客户端：创建客户端
-#2. 发送请求：发送请求
-#3. 返回请求结果：返回请求结果
+# 冒烟：POST /order 主路径 201/202；INVENTORY_BUSY_PROB=0 避免烟测抖动
 @pytest.mark.smoke
 def test_create_order_success(app_state, client):
-    # 避免库存随机 503 使烟测非确定（与契约用例中“成功路径重试”策略区分）
+    # 关随机库存 503，与契约用例「重试覆盖成功路径」分工
     app_state.INVENTORY_BUSY_PROB = 0.0
     resp = client.post("/order", json={"item_id": "sku-1", "quantity": 1})
     assert resp.status_code in (201, 202)
 
-#幂等测试，用于测试幂等性
-#测试过程：
-#1. 创建客户端：创建客户端
-#2. 发送请求：发送请求
-#3. 返回请求结果：返回请求结果
+# 行为：幂等重放——同 X-Idempotency-Key + 同 body 第二次应 200 且同 order_id（首次须 201）
 def test_idempotency_returns_same_order(client):
-    headers = {"X-Idempotency-Key": "same-key"}#幂等键，用于测试幂等性
+    headers = {"X-Idempotency-Key": "same-key"}
 
     first = client.post("/order", json={"item_id": "sku-2", "quantity": 1}, headers=headers)
     second = client.post("/order", json={"item_id": "sku-2", "quantity": 1}, headers=headers)
@@ -51,9 +44,8 @@ def test_idempotency_returns_same_order(client):
         assert second.status_code == 200
         assert first.get_json()["order_id"] == second.get_json()["order_id"]
 
-
+# 行为：幂等冲突——同 Key、不同 body 应 409；需稳定首请求（关随机忙、放宽截止）以免 release 预留后虚绿
 def test_idempotency_key_conflict_returns_409(app_state, client):
-    # 避免库存 503 / 截止预算触发 202 时释放幂等预留，导致第二次被当成全新预订而得到 201（虚绿）
     app_state.INVENTORY_BUSY_PROB = 0.0
     app_state.BUSINESS_TIMEOUT_MS = 999
 
@@ -65,7 +57,7 @@ def test_idempotency_key_conflict_returns_409(app_state, client):
     second = client.post("/order", json={"item_id": "sku-2", "quantity": 2}, headers=headers)
     assert second.status_code == 409
 
-
+# 兼容：Redis 中 idem: 值为纯字符串 order_id 时仍能 200 重放（旧数据形态）
 def test_legacy_plain_idempotency_value_still_replays(app_state, client):
     app_state.redis_client.setex("idem:legacy-key", 300, "OID-LEGACY")
     resp = client.post(
@@ -79,6 +71,7 @@ def test_legacy_plain_idempotency_value_still_replays(app_state, client):
     assert body["order_id"] == "OID-LEGACY"
 
 
+# 并发：同 Key 同 body 双线程——应仅一单，状态码为 200+201，order_id 唯一
 def test_concurrent_same_idempotency_key_does_not_duplicate_order(app_state, monkeypatch):
     app_state.INVENTORY_BUSY_PROB = 0.0
     app_state.IDEM_WAIT_TIMEOUT_MS = 300
@@ -114,14 +107,9 @@ def test_concurrent_same_idempotency_key_does_not_duplicate_order(app_state, mon
     assert len(set(order_ids)) == 1
     assert sorted(status for status, _ in results) == [200, 201]
 
-#限流测试，用于测试限流是否生效
-#测试过程：
-#1. 设置限流：设置限流
-#2. 创建客户端：创建客户端
-#3. 发送请求：发送请求
-#4. 返回请求结果：返回请求结果
+# 限流：滑动窗口——压低阈值后连续 POST 应出现 429
 def test_rate_limit_can_reject(app_state, client):
-    app_state.RATE_LIMIT_PER_SEC = 2#设置限流，用于测试限流是否生效
+    app_state.RATE_LIMIT_PER_SEC = 2
     app_state.RATE_LIMIT_ALGORITHM = "sliding"
     statuses = []
     for _ in range(6):
@@ -130,6 +118,7 @@ def test_rate_limit_can_reject(app_state, client):
     assert 429 in statuses
 
 
+# 限流：固定窗口——同上，换算法与 sku 避免键冲突
 def test_rate_limit_fixed_algorithm_still_rejects(app_state, client):
     app_state.RATE_LIMIT_PER_SEC = 2
     app_state.RATE_LIMIT_ALGORITHM = "fixed"
@@ -140,6 +129,7 @@ def test_rate_limit_fixed_algorithm_still_rejects(app_state, client):
     assert 429 in statuses
 
 
+# 单元：FakeRedis 滑动窗口上限（不打 HTTP；与生产 Lua 语义对齐）
 def test_fake_redis_sliding_window_enforces_cap():
     r = FakeRedis()
     t0 = 1_000_000.0
@@ -148,11 +138,7 @@ def test_fake_redis_sliding_window_enforces_cap():
     assert not r.rate_limit_sliding_allow("rl:sw:test", t0 + 0.02, 1.0, 2, "m3", 3)
     assert r.rate_limit_sliding_allow("rl:sw:test", t0 + 1.5, 1.0, 2, "m4", 3)
 
-#健康检查测试，用于测试健康检查是否成功
-#测试过程：
-#1. 创建客户端：创建客户端
-#2. 发送请求：发送请求
-#3. 返回请求结果：返回请求结果
+# 冒烟：GET /healthz 综合健康；200 且 body 含 redis、resilience（与 /live、/ready 区分）
 @pytest.mark.smoke
 def test_healthz(client):
     resp = client.get("/healthz")
@@ -161,7 +147,7 @@ def test_healthz(client):
     assert "redis" in body
     assert "resilience" in body
 
-
+# 参数化：非法 POST body → 统一期望 400
 @pytest.mark.parametrize(
     "payload",
     [
@@ -176,6 +162,7 @@ def test_create_order_invalid_payload_returns_400(client, payload):
     assert resp.status_code == 400
 
 
+# 探针：Redis 不可用——/healthz 仍 200 但 status=degraded
 def test_healthz_degraded_when_redis_unavailable(app_state, client):
     app_state.redis_client = FakeRedis(broken=True)
     resp = client.get("/healthz")
@@ -185,6 +172,7 @@ def test_healthz_degraded_when_redis_unavailable(app_state, client):
     assert body["redis"] is False
 
 
+# 探针：Redis 不可用——/live 仍 200（存活不检查强依赖）
 def test_live_ok_even_when_redis_unavailable(app_state, client):
     app_state.redis_client = FakeRedis(broken=True)
     resp = client.get("/live")
@@ -194,6 +182,7 @@ def test_live_ok_even_when_redis_unavailable(app_state, client):
     assert body["status"] == "ok"
 
 
+# 探针：Redis 可用——/ready 200 ready
 def test_ready_ok_when_redis_available(client):
     resp = client.get("/ready")
     body = resp.get_json()
@@ -203,6 +192,7 @@ def test_ready_ok_when_redis_available(client):
     assert body["redis"] is True
 
 
+# 探针：Redis 不可用——/ready 503 not_ready
 def test_ready_not_ready_when_redis_unavailable(app_state, client):
     app_state.redis_client = FakeRedis(broken=True)
     resp = client.get("/ready")
@@ -213,6 +203,7 @@ def test_ready_not_ready_when_redis_unavailable(app_state, client):
     assert body["redis"] is False
 
 
+# 韧性：Redis 不可用时限流 fail-open——多次 POST 不应仅因限流出现 429
 def test_rate_limit_fails_open_when_redis_unavailable(app_state, client):
     app_state.RATE_LIMIT_PER_SEC = 1
     app_state.redis_client = FakeRedis(broken=True)
@@ -222,10 +213,10 @@ def test_rate_limit_fails_open_when_redis_unavailable(app_state, client):
         resp = client.post("/order", json={"item_id": "sku-4", "quantity": 1})
         statuses.append(resp.status_code)
 
-    # Redis 异常时当前实现是 fail-open，不会因为限流直接 429
     assert 429 not in statuses
 
 
+# 熔断：半开探测成功——预置开路将过期 + monkeypatch 随机；期望 201 且关闸
 def test_half_open_probe_success_closes_circuit(app_state, client, monkeypatch):
     r = app_state.redis_client
     r.set(app_state.CB_KEY_OPEN_UNTIL, str(time.time() - 10.0))
@@ -240,6 +231,7 @@ def test_half_open_probe_success_closes_circuit(app_state, client, monkeypatch):
     assert r.get(app_state.CB_KEY_PROBE) is None
 
 
+# 熔断：半开探测失败——随机走库存忙；期望 503 且延长开路
 def test_half_open_probe_failure_reopens_circuit(app_state, client, monkeypatch):
     r = app_state.redis_client
     r.set(app_state.CB_KEY_OPEN_UNTIL, str(time.time() - 10.0))
@@ -254,6 +246,7 @@ def test_half_open_probe_failure_reopens_circuit(app_state, client, monkeypatch)
     assert r.get(app_state.CB_KEY_PROBE) is None
 
 
+# 熔断：探测进行中——预置 CB_KEY_PROBE；期望 202 不抢探针
 def test_half_open_blocks_when_probe_in_flight(app_state, client):
     r = app_state.redis_client
     r.set(app_state.CB_KEY_OPEN_UNTIL, str(time.time() - 5.0))
@@ -264,12 +257,14 @@ def test_half_open_blocks_when_probe_in_flight(app_state, client):
 
 
 def _cb_get_open_until(r, app_state):
+    """读断路器开路截止时间（秒），辅助熔断相关断言。"""
     raw = r.get(app_state.CB_KEY_OPEN_UNTIL)
     if not raw:
         return 0.0
     return float(raw)
 
 
+# 出库：GET /order 响应字段白名单——存储含 internal 字段时不得出现在 JSON
 def test_get_order_response_uses_whitelist(app_state, client):
     app_state.redis_client.setex(
         "order:OID-1",
@@ -293,6 +288,7 @@ def test_get_order_response_uses_whitelist(app_state, client):
     assert "internal_note" not in body
 
 
+# 行为：取消幂等——二次 cancel 第二次为 already_cancelled；建单非 201 则 skip
 def test_cancel_order_is_idempotent(client):
     create = client.post("/order", json={"item_id": "sku-9", "quantity": 1})
     if create.status_code != 201:

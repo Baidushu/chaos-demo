@@ -155,6 +155,11 @@ class FakeRedis:
             return True
 
 # 测试用例的初始化
+#测试过程：
+#1. 设置幂等性：设置幂等性
+#2. 创建客户端：创建客户端
+#3. 发送请求：发送请求
+#4. 返回请求结果：返回请求结果
 @pytest.fixture
 def app_state():
     app_module.redis_client = FakeRedis()
