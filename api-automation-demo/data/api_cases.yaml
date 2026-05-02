@@ -1,0 +1,56 @@
+# 数据驱动用例：CI 默认无 BASE_URL 时用 mock；本地可指向 chaos-demo 服务做联调。
+#
+# 联调示例（仓库根已 docker compose up）:
+#   set API_AUTOMATION_BASE_URL=http://127.0.0.1:5000
+#   cd api-automation-demo && pytest -v
+
+suite: chaos-demo-contract-samples
+cases:
+  - id: healthz_mock
+    name: GET /healthz (mocked when no BASE_URL)
+    method: GET
+    path: /healthz
+    headers: {}
+    json_body: null
+    retry: false
+    mock:
+      status_code: 200
+      json:
+        status: healthy
+    assertions:
+      status: 200
+      json_contains:
+        status: healthy
+
+  - id: order_invalid_mock
+    name: POST /order 400 invalid body (mock)
+    method: POST
+    path: /order
+    headers:
+      Content-Type: application/json
+    json_body:
+      item_id: ""
+      quantity: 1
+    retry: false
+    mock:
+      status_code: 400
+      json:
+        error: invalid request
+    assertions:
+      status: 400
+      json_contains:
+        error: invalid request
+
+  - id: flaky_ok_mock
+    name: demonstrates retry wrapper (503 twice then 200)
+    method: GET
+    path: /healthz
+    headers: {}
+    json_body: null
+    retry: true
+    retry_attempts: 4
+    retry_delay_sec: 0.01
+    assertions:
+      status: 200
+      json_contains:
+        status: healthy

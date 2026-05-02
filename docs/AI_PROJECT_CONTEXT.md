@@ -3,14 +3,17 @@
 > **给 AI 的硬要求**：改代码或回答问题前，**只依赖本文**应能建立正确心智模型；**不要求**再读 `docs/` 下其他 Markdown，也**不要求**通读源码才能做常规任务。  
 > **维护约定**：改架构、新主干行为、新默认环境变量、新 CI 步骤时，**必须同步改本文**；细项表格仍可在 `plan/OPTIMIZATION_BACKLOG.md` 记账，但**不是**读项目的必经入口。  
 > **其它 `docs/*.md`**：人类导航、面试、长跑题与**工程债表**；**不**重复作为第二套技术事实，见 `docs/README.md` 分层说明。  
-> **根路径**：本文件位于 `docs/AI_PROJECT_CONTEXT.md`；下文中「根目录」指仓库根 `chaos-demo/`。
+> **根路径**：本文件位于 `docs/AI_PROJECT_CONTEXT.md`；下文中「根目录」指仓库根 `chaos-demo/`。  
+
+**对外叙事（面试主线）**：本仓库是 **轻量级质量工程平台（QEP）**——用 **混沌/故障注入、压测、门禁脚本与 CI** 把「不同策略与故障场景下的行为与指标」固化成可重复的评估闭环；**`agent-eval/` 为辅线扩展**（工具调用稳定性），**不是**「AI 主项目」。口述模板见根目录 [`README.md`](../README.md) 文首。测试分层与 failure model 见 [`TEST_STRATEGY.md`](TEST_STRATEGY.md)；benchmark 行为解读见 [`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md)。
 
 ---
 
 ## 1. 项目目标（为何存在）
 
-- **服务侧（根目录 `app.py` 等）**：在模拟订单的 Flask 服务上，用环境变量开关 **韧性**（限流、超时降级、熔断含半开、幂等、可观测、可选流量录制），另提供 **HTTP 故障注入**（Redis 存状态、多 worker 共享）；并与 **不开启韧性的同构实例** 做压测对比，用 **JSON 报告 + 质量门禁** 把「好/坏」自动化。  
-- **评测侧（`agent-eval/`）**：在「会调 HTTP 工具下单/查询/取消」的 **Agent 规划器** 上，做打分、单轮门禁、**无故障 vs 故障**对照（Token/重试等），**个人 demo 量级**（小数据集、可跳过云 Judge），与订单服务**配合但不混在同一进程**。
+- **平台主线（质量工程）**：在可部署的订单服务上，把 **韧性治理**（限流、熔断、超时、幂等、可观测、流量录制）与 **HTTP 故障注入**（可建模的失败）串成可测对象；用 **压测对照**（治理 vs 基线）、**安全扫描** 与 **质量门禁** 把指标与阈值自动化，支撑「是否可发」的**工程化判断**（教学/演示量级）。  
+- **服务载体**：Flask + Redis 实现订单语义与治理钩子；详见 §2.1。  
+- **扩展辅线（`agent-eval/`）**：**非核心 AI 产品**，而是一个**简单的扩展模块** —— 在 **HTTP 工具调用**路径上，用规则/可选 LLM 规划器模拟「调下单接口」等行为，结合**客户端 chaos** 做 **无故障 vs 故障** 对照与门禁，用于回答「**不稳定环境下工具调用与重试策略是否失控**」；与订单服务**进程隔离**，面试中应**降级叙述**，避免喧宾夺主。  
 
 ### 1.1 近期已落地工程化（维护者速览）
 
@@ -22,7 +25,7 @@
 | **限流/熔断** | **限流**早先即 **Redis** 键（按 IP 滑动/固定桶），**多 worker/多实例共享同一上限**；**熔断**自本迭代起也落在 **Redis**（`cb:open_until` / `cb:failures` / `cb:probe`），与进程解耦，**多 gunicorn worker 行为一致**；`CIRCUIT_PROBE_TTL_SEC` 控半开探测占坑 TTL。 |
 | **应用语义** | 建单 **202 超时**按 **`elapsed+计划时间` 与 `BUSINESS_TIMEOUT_MS` 的端到端预算**；**`X-Request-Id`** 回显；韧性关键路径 **JSON 行日志**；**`validate_resilience_config()`**（import 不 ping Redis）。 |
 | **订单与部署** | 订单在 **Redis** `order:{id}`，**`ORDER_TTL_SEC`**（compose/k8s/默认一致）；**`Dockerfile` `gunicorn --workers 2`**。 |
-| **agent-eval** | 仍为辅线：CI 用 `rule` + `AGENT_EVAL_SKIP_JUDGE` 等**能跑、能门禁**；**`chaos_compare`** 子进程设 **`CHAOS_SUBPROC_TIMEOUT_SEC`（默认 1200s）** 防挂起。 |
+| **agent-eval** | **辅线**：见 **§8**；CI 用 `rule` + `AGENT_EVAL_SKIP_JUDGE` 等**能跑、能门禁**；**`chaos_compare`** 子进程设 **`CHAOS_SUBPROC_TIMEOUT_SEC`（默认 1200s）** 防挂起。**叙事上**强调「工具调用稳定性评估」，**不要**把本仓讲成 AI 主项目。 |
 | **HTTP 故障注入** | **`chaos_service/fault_injection.py`**：活跃故障存 **Redis** 键 `fault:{type}`（`setex`）；**`http_api.before_request`** 对业务路径调用 **`apply_faults`**（`/fault` 与 `/healthz`、`/live`、`/ready`、`/metrics` **不**注入）；类型 **latency / exception / drop / slow_db**，关 **`ENABLE_FAULT_INJECTION`** 则整条链跳过。 |
 | **可选 LLM 辅助** | 根目录 **`llm_client.py`**（Ollama / OpenAI 兼容端点，标准库 HTTP）、**`llm_assist.py`**（CLI：`generate-tests`、`analyze-report`）；**不进 CI 主链**，无额外 pip 依赖。 |
 
@@ -51,9 +54,11 @@
 | `prometheus_alerts.yml` | 示例 **告警规则**（5xx/限流/降级等），与 compose 中 Prometheus 卷挂载；未配 Alertmanager 时仅在 Prometheus **/alerts** 可见 |
 | `grafana/provisioning/`、`grafana/dashboards/` | 数据源与大盘 |
 | `tests/` | 全部单测，见 §9 |
-| `agent-eval/` | 数据集、配置 `config/eval_config.yaml`、脚本 `scripts/*.py`、报告 `agent-eval/reports/`，见 §8 |
+| `agent-eval/` | **扩展**：工具调用稳定性评估脚本与数据集，见 **§8**（**非**质量工程主线） |
+| `api-automation-demo/` | **独立**：pytest + httpx + **YAML** 数据驱动 + **Allure** + 专用 workflow；证明接口自动化范式，**不与** `app.py` 同进程 |
 | `k8s/` | 可选 K8s 清单、`CHAOS_LITE.md`、Chaos 脚本，**不跑 CI 默认流程** |
 | `.github/workflows/qa.yml` | CI 流水线，见 §7 |
+| `.github/workflows/api-automation-demo.yml` | 子项目 **api-automation-demo** 独立 pytest + Allure artifact |
 | `reports/` | 运行产物（benchmark、**benchmark_history**、**benchmark_trend**、security、replay、流量录制等） |
 
 ---
@@ -331,23 +336,21 @@
 9. `python agent-eval/scripts/chaos_compare.py --strict`（`TOOLS_BASE_URL`、`AGENT_MODE`、`AGENT_EVAL_SKIP_JUDGE` 等）  
 10. 上传 `reports/` 与 `agent-eval/reports/` 部分产物为 artifact  
 
+**并行工作流**：**`api-automation-demo.yml`** 在子目录安装独立依赖并跑 **pytest + Allure**，不上主链 Docker；用于简历级「接口自动化」展示，见 **`api-automation-demo/README.md`**。
+
 **本地 `run.ps1 -Task qa`**：含 pip、**全量** pytest、bench、**Wait-AppHealthz**、scan、gate；**不**一定包含与 CI 完全相同的 smoke 分步，以脚本为准。
 
 ---
 
-## 8. `agent-eval/` 子项目（不读其他 md 时要知道这些）
+## 8. `agent-eval/` 扩展模块（辅线：工具调用稳定性）
 
-- **目的**：用 `datasets/tool_eval.jsonl` 等驱动「规划器」产生工具调用计划，用 **HTTP 真实调** 订单服务或离线兜底，输出 **正确率、重试、token 启发式/ollama 计数** 等，并和 **配置 `config/eval_config.yaml` 中 `gate:`** 比较，不达标则 `gate_agent_eval` 非 0 退出。  
-- **主脚本**（相对 `agent-eval/scripts/`）：  
-  - `run_agent_eval.py`：跑场景，可 `--chaos` 注入客户端延迟/失败。  
-  - `score_agent_eval.py`：打分、写 `agent_eval_latest.json` 等。  
-  - `gate_agent_eval.py`：读 `eval_config.yaml` 的门禁。  
-  - `chaos_compare.py`：**无故障轮 vs 混故障轮** 对照，多类 **CHAOS_*** 环境变量 做 **Token/重试/重试税** 等严格门禁，支持 `--strict`。  
-  - `eval_variance.py`：同配置多随机种子，输出波动统计。  
-  - `judge_local.py`：可选判官。  
-- **模式**：`AGENT_MODE=rule` 为规则规划（**CI 常用**）；`ollama` 为本地 LLM，环境差异大。  
-- **与订单服务关系**：`TOOLS_BASE_URL` 指向 `http://127.0.0.1:5000` 时依赖订单容器已起。`run_agent_eval` 默认会先探针 **`/healthz`**（可用 **`SKIP_TOOLS_HEALTH_CHECK=1`** 关闭）；`TOOLS_HTTP_TIMEOUT_SEC` 控制工具 HTTP 超时（混故障+延迟时默认 **12s** 级）。**PowerShell**：`.\run.ps1 -Task agenteval` / `agentchaos` / `agentvariance` 会注入与 CI 一致的 **`TOOLS_BASE_URL` / `AGENT_MODE` / `AGENT_EVAL_SKIP_JUDGE`** 并 **等待 healthz**；**`qafull`** = `qa` 后再 **`chaos_compare --strict`**，对齐 CI 全链。  
-- **局限**：**小数据集、token 不保证账单级、客户端 chaos 不等价于杀容器**，声明 demo 即可。
+> **面试口径**：Agent 模块**不是核心**；它做的是在**不稳定环境**下，对「按规划去调 HTTP 工具（下单/查询等）」的路径做对照与门禁，重点看 **重试、失败率、Token/启发式指标** 是否越线。**主线叙事**应始终回到 **quality engineering**：压测、门禁、故障注入与韧性。
+
+- **目的（工程）**：用 `datasets/tool_eval.jsonl` 等驱动**规划器**产生工具调用计划，**真实 HTTP** 调订单服务（或离线兜底），输出正确率、重试、token 启发式等，并与 **`config/eval_config.yaml` 的 `gate:`** 比较；`chaos_compare` 提供 **无故障 vs 混故障** 轮次对照（**`--strict`** 用于 CI）。  
+- **不是什么**：不是大模型产品化、不是完整 Agent 平台；**小数据集**、**`AGENT_MODE=rule`** 为 CI 默认；**`ollama` 模式**环境差异大。  
+- **主脚本**（`agent-eval/scripts/`）：`run_agent_eval.py`、`score_agent_eval.py`、`gate_agent_eval.py`、`chaos_compare.py`（CI 常见）、`eval_variance.py`、`judge_local.py`。  
+- **与订单服务关系**：`TOOLS_BASE_URL` 指向已起的 `5000`；`SKIP_TOOLS_HEALTH_CHECK`、`TOOLS_HTTP_TIMEOUT_SEC` 等见脚本与根 `run.ps1`。  
+- **局限**：客户端 chaos **不等价**于杀容器；token 指标**非**账单级。详见 [`agent-eval/README.md`](../agent-eval/README.md)（该 README 与本文 **§8** 口径一致）。
 
 ---
 
@@ -401,7 +404,7 @@
 - **不是** 金融级生产系统；**多地域/多独立 Redis/跨集群** 的限流与熔断**一致** 未在核心路径解决；**同 compose / 同 Redis 实例** 下，**限流与熔断已为共享状态**（见 §1.1/§2.1 A）。  
 - **压测脚本** 短连接、单机；压力上来时**客户端/宿主机**可能先瓶颈。  
 - **Grafana 大盘** 为教学展示，**不承诺**「全链路根因一步定位」。  
-- **Agent 评测** 为 **小样本+可复现+门禁** 的 demo，不替代大厂完整评测平台。  
+- **Agent 扩展（`agent-eval/`）** 为 **工具调用稳定性** 对照与门禁，**小样本 demo**；**面试主线**应强调 **质量工程平台**，避免把仓库讲成「AI 主项目」。  
 - **HTTP 故障注入**（`/fault/*`，Redis 状态）为**应用内协作式**模拟；**不等价**于网络 `tc`、杀 Pod 或客户端-only chaos。  
 
 ---
@@ -437,7 +440,7 @@
 
 ## 14. 可选补充（人类读者，**非** AI 必读）
 
-**全部 Markdown 的导航表**见 **`docs/README.md`**（按场景：面试、深挖、K8s、个人日志、**零基础学习路线**等）。**处理自动化任务、代码修改时，以本文 1–13 节为权威上下文**；其它 md 不重复当第二套事实源。  
+**全部 Markdown 的导航表**见 **`docs/README.md`**。面试向补完：**[`TEST_STRATEGY.md`](TEST_STRATEGY.md)**（测试分层 / failure model）、**[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md)**（压测结论表述）。**处理自动化任务、代码修改时，以本文 1–13 节为权威上下文**；其它 md 不重复当第二套事实源。  
 零基础测开读者可从 **`docs/LEARNING_PLAN_0BASIS_SDET.md`** 按阶段自测推进，再回读本文对应章节。
 
 *文档版本以仓库主分支与上述文件名一致时为准；若与运行结果冲突，以当前 `app.py` 与各脚本**实际行为**为最终准绳并应回写本文。*

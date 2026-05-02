@@ -1,8 +1,8 @@
 # agent-eval
 
-> **与订单服务的关系、CI 中的 `chaos_compare`、环境变量全表**：见 [`../docs/AI_PROJECT_CONTEXT.md`](../docs/AI_PROJECT_CONTEXT.md) **§8**；[`../docs/plan/AGENT_EVAL_PLAN.md`](../docs/plan/AGENT_EVAL_PLAN.md) 仅保留长期愿景与诚实边界（§2）。
+> **主线叙事**：本目录是 **quality engineering 仓库里的扩展模块**，用于评估在**不稳定环境下**「按规划调用 HTTP 工具（下单/查询等）」的稳定性（重试、失败率、启发式 token 等），**不要**把整个 `chaos-demo` 讲成「AI Agent 项目」。技术事实与 CI 步骤仍以 [`../docs/AI_PROJECT_CONTEXT.md`](../docs/AI_PROJECT_CONTEXT.md) **§8** 为准；[`../docs/plan/AGENT_EVAL_PLAN.md`](../docs/plan/AGENT_EVAL_PLAN.md) 保留长期愿景与诚实边界（§2）。
 
-面向智能下单 Agent 的本地低成本评测模块（**个人 demo 量级**：`tool_eval.jsonl` 仅约 10 条样例，能跑通、能展示门禁与对照即可）。
+面向工具调用路径的**本地低成本**评测（**个人 demo 量级**：`tool_eval.jsonl` 仅约 10 条样例，能跑通、能展示门禁与对照即可）。
 
 ## 目标
 - 测试 Agent 的工具调用是否正确（工具、参数、顺序）。

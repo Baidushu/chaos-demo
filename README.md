@@ -1,6 +1,10 @@
 # chaos-demo
 
-面向**稳定性 / 混沌 / 测开**的练习型项目：Flask 订单 API、Redis、限流 / 熔断 / 幂等、故障注入；配套 pytest 分层、`benchmark_compare`、`security_scan`、`quality_gate`、Grafana/Prometheus 与 GitHub Actions QA 流水线。
+**定位（面试可背）**：这是一个**轻量级质量工程平台**（**Quality Engineering Platform**）：以受控的混沌注入、HTTP 压测与质量门禁为主线，在多种故障与控制面策略下对服务做**可复现的自动化评估**，用于演示与辅助上线决策；**不是**「一个 Flask 订单 CRUD demo」一句带过。
+
+> **标准说法**：我设计了一个轻量级质量工程平台，通过混沌注入、压测和质量门禁，实现系统在不同故障场景下的自动化评估，并用于辅助上线决策。
+
+底座仍是 **Flask + Redis** 订单 API（限流 / 熔断 / 幂等 / 超时 / 可观测 / **HTTP 故障注入**），配套 **pytest** 分层、`benchmark_compare`、`security_scan`、`quality_gate`、`agent-eval`（辅线）、Grafana/Prometheus 与 GitHub Actions。**测试怎么分层、failure model 怎么说**见 **[`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md)**；**压测报告怎么讲 trade-off**见 **[`docs/PERFORMANCE_ANALYSIS.md`](docs/PERFORMANCE_ANALYSIS.md)**。**接口自动化框架（pytest + httpx + YAML + Allure）保底样例**见 **[`api-automation-demo/README.md`](api-automation-demo/README.md)**。
 
 ## 环境要求
 
@@ -132,12 +136,14 @@ python fault_demo.py
 
 ## CI
 
-`.github/workflows/qa.yml`：安装 `requirements-dev.txt` → pytest（smoke + 全量）→ compose → 基准对比 → 安全扫描 → `quality_gate` → `chaos_compare --strict`（环境变量与本地 `run.ps1` 可对齐）。
+- **主链**：`.github/workflows/qa.yml` — 安装 `requirements-dev.txt` → pytest → compose → benchmark → 安全扫描 → `quality_gate` → `chaos_compare --strict`。  
+- **接口自动化样例**：`.github/workflows/api-automation-demo.yml` — 独立安装 `api-automation-demo/requirements.txt`，pytest 并上传 **Allure** 原始结果 artifact。
 
 ## 目录速览
 
 - `chaos_service/`：领域逻辑（存储、HTTP 路由、韧性、**`fault_injection`**、流量记录）
 - `fault_demo.py`：对已起服务跑一轮故障注入演示
 - `tests/`：`conftest.py`（FakeRedis、fixtures）、分层测试（含 **`test_fault_injection`**、**`test_llm_client`** 等）
-- `agent-eval/`：工具调用评测与 chaos 对照脚本
+- **`api-automation-demo/`**：pytest + httpx + YAML 驱动 + Allure + CI（与主服务**解耦**）
+- `agent-eval/`：**扩展模块** — 工具调用在不稳定环境下的稳定性评估与对照（**非**主线「AI 项目」）
 - `k8s/`、`grafana/`、`prometheus*.yml`：运维与可观测性示例

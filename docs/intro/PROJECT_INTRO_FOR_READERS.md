@@ -25,10 +25,12 @@
 | `grafana/provisioning/`、`grafana/dashboards/` | 数据源与大盘 |
 | `pytest.ini` | 标记 `smoke`、`contract` |
 | `tests/` | 单测与 FakeRedis，见下节 |
-| `agent-eval/` | 见 [`../../agent-eval/README.md`](../../agent-eval/README.md) 与全景 §8 |
+| `agent-eval/` | **辅线**：工具调用稳定性；见 [`../../agent-eval/README.md`](../../agent-eval/README.md) 与全景 §8 |
 | `sample-data/` | 示例数据（如 JSONL） |
 | `k8s/` | 可选清单与 `CHAOS_LITE.md`，不跑 CI 默认 |
-| `.github/workflows/qa.yml` | CI；顺序见 `AI_PROJECT_CONTEXT` §7 |
+| `api-automation-demo/` | **pytest + httpx + YAML + Allure**：接口自动化样例目录，与主链解耦 |
+| `.github/workflows/qa.yml` | 主 CI；顺序见 `AI_PROJECT_CONTEXT` §7 |
+| `.github/workflows/api-automation-demo.yml` | 独立跑子目录 pytest + Allure artifact |
 
 ---
 
