@@ -9,20 +9,22 @@
 
 ## 1. 项目目标（为何存在）
 
-- **服务侧（根目录 `app.py` 等）**：在模拟订单的 Flask 服务上，用环境变量开关 **韧性**（限流、超时降级、熔断含半开、幂等、可观测、可选流量录制），并与 **不开启韧性的同构实例** 做压测对比，用 **JSON 报告 + 质量门禁** 把「好/坏」自动化。  
+- **服务侧（根目录 `app.py` 等）**：在模拟订单的 Flask 服务上，用环境变量开关 **韧性**（限流、超时降级、熔断含半开、幂等、可观测、可选流量录制），另提供 **HTTP 故障注入**（Redis 存状态、多 worker 共享）；并与 **不开启韧性的同构实例** 做压测对比，用 **JSON 报告 + 质量门禁** 把「好/坏」自动化。  
 - **评测侧（`agent-eval/`）**：在「会调 HTTP 工具下单/查询/取消」的 **Agent 规划器** 上，做打分、单轮门禁、**无故障 vs 故障**对照（Token/重试等），**个人 demo 量级**（小数据集、可跳过云 Judge），与订单服务**配合但不混在同一进程**。
 
 ### 1.1 近期已落地工程化（维护者速览）
 
 | 域 | 已做 |
 |----|------|
-| **工程结构** | 业务与韧性实现拆到 **`chaos_service/`**（`http_api` / `resilience` / `store` / `traffic`），`app.py` 持 **Flask `app`**、**Prometheus 指标**、**配置常量** 并 `register_routes`；**`Dockerfile`** 同时 `COPY app.py` 与 **`COPY chaos_service ./chaos_service`**。 |
+| **工程结构** | 业务与韧性实现拆到 **`chaos_service/`**（`http_api` / `resilience` / `store` / **`fault_injection`** / `traffic`），`app.py` 持 **Flask `app`**、**Prometheus 指标**、**配置常量** 并 `register_routes`；**`Dockerfile`** 同时 `COPY app.py` 与 **`COPY chaos_service ./chaos_service`**。 |
 | **压测/门禁** | 同上；另 **`BENCHMARK_RUNS`（多轮中位数）**、**`reports/benchmark_history/`** 归档、**`benchmark_trend_latest.json` / `.md`**（与历史**中位数**比 delta）；**CI** 在 Benchmark 步设 `BENCHMARK_RUNS: "3"` 等。 |
 | **可观测** | 仓库内 **`prometheus_alerts.yml`** 示例告警，compose 挂载到 Prometheus；**无 Alertmanager** 时仅 Prometheus UI 中可见 firing。 |
 | **限流/熔断** | **限流**早先即 **Redis** 键（按 IP 滑动/固定桶），**多 worker/多实例共享同一上限**；**熔断**自本迭代起也落在 **Redis**（`cb:open_until` / `cb:failures` / `cb:probe`），与进程解耦，**多 gunicorn worker 行为一致**；`CIRCUIT_PROBE_TTL_SEC` 控半开探测占坑 TTL。 |
 | **应用语义** | 建单 **202 超时**按 **`elapsed+计划时间` 与 `BUSINESS_TIMEOUT_MS` 的端到端预算**；**`X-Request-Id`** 回显；韧性关键路径 **JSON 行日志**；**`validate_resilience_config()`**（import 不 ping Redis）。 |
 | **订单与部署** | 订单在 **Redis** `order:{id}`，**`ORDER_TTL_SEC`**（compose/k8s/默认一致）；**`Dockerfile` `gunicorn --workers 2`**。 |
 | **agent-eval** | 仍为辅线：CI 用 `rule` + `AGENT_EVAL_SKIP_JUDGE` 等**能跑、能门禁**；**`chaos_compare`** 子进程设 **`CHAOS_SUBPROC_TIMEOUT_SEC`（默认 1200s）** 防挂起。 |
+| **HTTP 故障注入** | **`chaos_service/fault_injection.py`**：活跃故障存 **Redis** 键 `fault:{type}`（`setex`）；**`http_api.before_request`** 对业务路径调用 **`apply_faults`**（`/fault` 与 `/healthz`、`/live`、`/ready`、`/metrics` **不**注入）；类型 **latency / exception / drop / slow_db**，关 **`ENABLE_FAULT_INJECTION`** 则整条链跳过。 |
+| **可选 LLM 辅助** | 根目录 **`llm_client.py`**（Ollama / OpenAI 兼容端点，标准库 HTTP）、**`llm_assist.py`**（CLI：`generate-tests`、`analyze-report`）；**不进 CI 主链**，无额外 pip 依赖。 |
 
 ---
 
@@ -31,13 +33,16 @@
 | 路径 | 作用 |
 |------|------|
 | `app.py` | Flask 入口与指标、配置、委托 **`chaos_service`** 注册路由与钩子（见 §2.1 A） |
-| `chaos_service/` | **`http_api`**（路由/钩子）、**`resilience`**（限流/熔断/日志）、**`store`**（订单与幂等 Redis 语义）、**`traffic`**（录制与脱敏） |
+| `chaos_service/` | **`http_api`**（路由/钩子）、**`resilience`**（限流/熔断/日志）、**`store`**（订单与幂等 Redis 语义）、**`fault_injection`**（动态故障与 `/fault/*` 逻辑）、**`traffic`**（录制与脱敏） |
 | `docker-compose.yml` | 起 `app`(5000)、`app_baseline`(5001)、`redis`、`prometheus`、`grafana` |
 | `Dockerfile` | 构建应用镜像；复制 `app.py` 与 `chaos_service/` |
 | `benchmark_compare.py` | HTTP 压测 5000 vs 5001；写 `reports/benchmark_latest.json`、**历史归档**、**`benchmark_trend_latest.*`**（见 §2.1 B） |
 | `security_scan.py` | 对 `SECURITY_SCAN_BASE_URL` 做轻量安全扫描，写 `reports/security_scan_latest.json` 与 `.md` |
 | `quality_gate.py` | 读 benchmark + security 报告，超阈值或报告过旧则 `exit 1` |
 | `replay_traffic.py` | 从 JSONL 流式读请求并重放，写 `reports/traffic_replay_*.json/.md` |
+| `fault_demo.py` | 需**已运行**的 API：编排注入延迟/丢包/清除，写 **`reports/fault_demo_latest.json`**（演示用） |
+| `llm_client.py` | 可选 LLM 客户端（**`LLM_BACKEND`** 等，见 §6） |
+| `llm_assist.py` | 可选 CLI：从 API 描述生成测试草稿、分析 benchmark/security 报告（依赖 `llm_client`） |
 | `run.ps1` | Windows 下一键：compose、pytest、bench、scan、gate、qa、agent 相关等 |
 | `pytest.ini` | 注册标记 `smoke`、`contract` 等（见 `pytest.ini` 正文） |
 | `sample-data/` | 示例 JSONL 等，供回放/学习 |
@@ -62,7 +67,8 @@
 | 方面 | 实现方法 |
 |------|----------|
 | 分工 | `app.py` 创建 **`Flask(__name__)`**、**`redis_client`**、**`prometheus_client` 各 Counter/Histogram**、从环境读**全局配置常量**，执行 **`validate_resilience_config()`** 后由 **`http_api.register_hooks` / `register_routes(app, CTX)`** 挂路由；`CTX` 为 **`sys.modules[__name__]`**，子模块经 `ctx` 读同一套配置与客户端。 |
-| `chaos_service/http_api.py` | 注册 **`before_request` / `after_request`**、**业务路由**（建单/查单/取消/健康/指标等）。 |
+| `chaos_service/http_api.py` | 注册 **`before_request` / `after_request`**、**业务路由**（建单/查单/取消/健康/指标等）；**`before_request`** 中（路径非 `/fault`、非探活/指标）调用 **`fault_injection.apply_faults`**：`drop`→**503**，`exception`→**RuntimeError**（框架转 500），`latency`/`slow_db`→**sleep** 后继续；**`/fault/*`** 路由注册在同一文件。 |
+| `chaos_service/fault_injection.py` | **`inject_fault` / `clear_fault` / `list_faults`** 等；**`apply_faults`** 返回 `drop`/`exception`/`latency` 语义供钩子处理；参数校验与 **`FAULT_*`** 上限见模块顶。 |
 | `chaos_service/resilience.py` | 限流 Lua、**熔断** ZSET/SET、超时判断、**JSON 行日志**辅助。 |
 | `chaos_service/store.py` | **订单** `order:{id}`、幂等 **`idem:{key}`**（`processing` 占位、**`IDEM_PENDING_TTL_SEC`**、冲突检测、**`IDEM_WAIT_*` 轮询**等，与 §5 幂等一致）。 |
 | `chaos_service/traffic.py` | 流量录制线程与脱敏。 |
@@ -166,6 +172,21 @@
 | Compose | 多服务 **bridge 网络**；`app` 可带 `cap_add: NET_ADMIN` 供本仓库网络实验/演示（与上表应用逻辑无强耦合）。 |
 | 应用镜像 | **`Dockerfile`**：`gunicorn` 绑定 `0.0.0.0:5000`，**`--workers 2`（默认可调）**；**订单在 Redis** `order:{order_id}`（JSON、TTL 见 `ORDER_TTL_SEC`），多 worker **共享**同一 Redis，查单/取消与进程数一致。 |
 
+### J. HTTP 故障注入 API 与 `fault_demo.py`
+
+| 方面 | 实现方法 |
+|------|----------|
+| 管理端点 | **`GET /fault/status`**：列出活跃故障与默认上限；**`POST /fault/inject`**：JSON `type`（`latency`/`exception`/`drop`/`slow_db`）、`params`、可选 **`ttl_sec`** → **201**；**`POST /fault/clear`**：`type` 清除单类；**`POST /fault/clear-all`**；**`DELETE /fault/inject/<fault_type>`** 同清除。 |
+| `fault_demo.py` | **`urllib.request`** 调上述 API；对比基线与故障下延迟/错误，汇总写入 **`reports/fault_demo_latest.json`**。 |
+
+### K. `llm_client.py` / `llm_assist.py`（可选）
+
+| 方面 | 实现方法 |
+|------|----------|
+| HTTP | 标准库 **`urllib.request`**；**Ollama** 走 `/api/chat`，**OpenAI 兼容**走 `/chat/completions`。 |
+| `LLMClient` | **`LLM_BACKEND`**：`auto`（先探 Ollama `/api/tags`，再需 **`LLM_API_KEY`**）、`ollama`、`openai`；**`OLLAMA_ENDPOINT`**、**`LLM_BASE_URL`**、**`LLM_MODEL`**、**`LLM_TIMEOUT_SEC`** 等见 §6。 |
+| `llm_assist.py` | **`argparse`** 子命令：**`generate-tests`**、**`analyze-report --report <path>`**；提示词内嵌 API 说明（含 **`/fault/*`** 摘要）。 |
+
 ---
 
 ## 3. 如何运行（最低限度命令，读到这里就能动手）
@@ -181,6 +202,8 @@
 4. 压测（需服务已起）：`python benchmark_compare.py` → 生成 `reports/benchmark_latest.json`；可选 `-n`、`-c`、`--seed`、`--warmup` 或 `BENCHMARK_*`（见 §2.1 B）。**CI** 通常设 `BENCHMARK_WARMUP` 与 `BENCHMARK_SEED` 以稳定首轮。    
 5. 安全扫描：`python security_scan.py`（默认打 `http://127.0.0.1:5000`）  
 6. 统一门禁：先确保步骤 4、5 已有报告，再 `python quality_gate.py`  
+7. （可选）故障演示：服务已起时 `python fault_demo.py`；或自行 `curl` 调 **`/fault/inject`** 等（见 §4）。  
+8. （可选）LLM：`python llm_assist.py --help`（需 Ollama 或 **`LLM_API_KEY`**，见 §6）。  
 
 **Windows 脚本**（在根目录 PowerShell，必须用 `.\run.ps1 -Task <名>`，不能直接敲 `agenteval`）：  
 | Task | 作用 |
@@ -189,6 +212,7 @@
 | `test` | 装 dev 依赖 + `pytest -q` 全量 |
 | `bench` / `scan` / `gate` | 压测 / 安全扫描 / 门禁（scan/gate 前建议服务与 bench 已就绪） |
 | `qa` | pip + 全量 pytest + bench + 循环等 healthz + scan + gate |
+| **`qafull`** | 同 `qa` 后再 **`chaos_compare --strict`**（对齐 CI 含 Agent 步） |
 | `agenteval` | 依次跑 `run_agent_eval` → `score` → `gate` |
 | `agentchaos` | 仅 `chaos_compare.py` |
 | `replay` | 默认读 `reports/traffic_record_latest.jsonl` 回放 |
@@ -209,8 +233,13 @@
 | GET | `/ready` | **就绪探针**，`redis.ping()` 成功 **200**，失败 **503**。 |
 | GET | `/healthz` | **始终 200**（便于旧探针/脚本）；体中 `status` 为 `healthy`/`degraded` 等反映 Redis 是否通；含 `note` 提示生产用 live/ready。 |
 | GET | `/metrics` | Prometheus 指标文本。 |
+| GET | `/fault/status` | JSON：是否启用注入、活跃故障列表、默认 `ttl`/上限（见 `build_fault_api_response`）。 |
+| POST | `/fault/inject` | 体 **`{"type":"latency|exception|drop|slow_db","params":{...},"ttl_sec":60}`**；成功 **201**。`latency` 用 **`latency_ms`**；`exception` 用 **`error_type`**；`drop` 用 **`drop_rate`**；`slow_db` 用 **`base_ms`** / **`jitter_ms`** / **`timeout_rate`**。 |
+| POST | `/fault/clear` | 体 **`{"type":"<fault_type>"}`**，清除该类。 |
+| POST | `/fault/clear-all` | 清除全部 `fault:*` 键。 |
+| DELETE | `/fault/inject/<fault_type>` | 同按类型清除。 |
 
-**韧性关闭时**（`ENABLE_RESILIENCE=false`）：用于基线容器对比，不走路径上的限流/熔断等（具体以 `app.py` 中 `if ENABLE_RESILIENCE` 为界）。
+**韧性关闭时**（`ENABLE_RESILIENCE=false`）：用于基线容器对比，不走路径上的限流/熔断等（具体以 `app.py` 中 `if ENABLE_RESILIENCE` 为界）。**故障注入**由 **`ENABLE_FAULT_INJECTION`** 单独控制，与韧性开关正交（关韧性时仍可注入延迟/丢包等，除非一并关闭故障注入）。
 
 ---
 
@@ -245,6 +274,13 @@
 - **流量录制**  
   - 环境变量 `TRAFFIC_RECORD_ENABLED=true` 时，后台队列写 `TRAFFIC_RECORD_FILE` 默认 `reports/traffic_record_latest.jsonl`；**不记录**仅健康检查/指标类路径；敏感字段有简单脱敏。  
 
+- **HTTP 故障注入**（`ENABLE_FAULT_INJECTION=true` 时）  
+  - 状态在 **Redis** `fault:{type}`，**TTL** 到期自动失效；**多 worker 共享**。  
+  - **`drop`**：按概率在 **`before_request`** 早返回 **503**（`ORDER_DEGRADED` 递增）。  
+  - **`exception`**：在钩子中 **`raise RuntimeError`**（表现为 **500** 类错误路径）。  
+  - **`latency` / `slow_db`**：在进业务逻辑前 **`time.sleep`**；**`slow_db`** 还可按 **`timeout_rate`** 模拟超时（内部按 **`drop`** 返回）。  
+  - **`/fault/*`** 路径**不**套用注入，避免无法自恢复。  
+
 ---
 
 ## 6. 主要环境变量（服务 `app` / 本地跑 `app.py`）
@@ -266,6 +302,13 @@
 | `IDEM_PENDING_TTL_SEC` | 幂等 **`processing` 占位** 的 NX 键 TTL（秒） | 默认如 `15`；防永远占坑 |
 | `IDEM_WAIT_TIMEOUT_MS` / `IDEM_WAIT_POLL_MS` | 同 key 并发时轮询**等待**首请求完成的上限与步进 | 与 **409/200** 协同语义，见 `chaos_service/store.py` |
 | `TRAFFIC_RECORD_ENABLED` / `TRAFFIC_RECORD_FILE` / `TRAFFIC_RECORD_MAX_QUEUE` | 录制开关与路径、队列长 | 默认关 |
+| `LOG_FORMAT` | `json` 时 `app.py` 用 **JSONFormatter** 统一日志行（便于聚合）；非 `json` 则用默认格式 | 默认 **`json`** |
+| `ENABLE_FAULT_INJECTION` | 是否执行 **`apply_faults`** 故障链 | 默认 **`true`**（`1`/`true`/`yes`/`on`） |
+| `FAULT_DEFAULT_TTL_SEC` | 注入记录 **Redis TTL** 默认秒 | 默认 **`60`** |
+| `FAULT_MAX_LATENCY_MS` | **`latency_ms`** 上限 | 默认 **`5000`** |
+| `FAULT_MAX_DROP_RATE` | **`drop_rate`** 上界（可 **`1.0`**） | 默认 **`1.0`** |
+
+**LLM 辅助（`llm_client.py`，可选）**：`LLM_BACKEND`（`auto`/`ollama`/`openai`）、`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`、`LLM_TIMEOUT_SEC`、`OLLAMA_ENDPOINT`；云端 OpenAI 兼容模式未设 base 时默认通义兼容端点（以代码为准）。
 
 **压测相关环境变量**（`benchmark_compare.py`）：`BENCHMARK_BASELINE_URL`、`BENCHMARK_PROTECTED_URL`、`BENCHMARK_TOTAL_REQUESTS`、`BENCHMARK_CONCURRENCY`、`BENCHMARK_SEED`、`BENCHMARK_WARMUP`、**`BENCHMARK_RUNS`**、**`BENCHMARK_HISTORY_KEEP`**、**`BENCHMARK_TREND_WINDOW`** 等，以脚本 `os.getenv` / `argparse` 为准。
 
@@ -306,9 +349,6 @@
 - **与订单服务关系**：`TOOLS_BASE_URL` 指向 `http://127.0.0.1:5000` 时依赖订单容器已起。`run_agent_eval` 默认会先探针 **`/healthz`**（可用 **`SKIP_TOOLS_HEALTH_CHECK=1`** 关闭）；`TOOLS_HTTP_TIMEOUT_SEC` 控制工具 HTTP 超时（混故障+延迟时默认 **12s** 级）。**PowerShell**：`.\run.ps1 -Task agenteval` / `agentchaos` / `agentvariance` 会注入与 CI 一致的 **`TOOLS_BASE_URL` / `AGENT_MODE` / `AGENT_EVAL_SKIP_JUDGE`** 并 **等待 healthz**；**`qafull`** = `qa` 后再 **`chaos_compare --strict`**，对齐 CI 全链。  
 - **局限**：**小数据集、token 不保证账单级、客户端 chaos 不等价于杀容器**，声明 demo 即可。
 
-
-- **定位**：用类 **BIOS/UEFI 启动日志** 样例，练习 **analyze → JSON/Markdown 报告 → `gate_*.py`**，与主链 **无运行时依赖**；**默认不进** `qa.yml` 的 Docker + bench 主链。  
-
 ---
 
 ## 9. 测试与标记（`tests/`）
@@ -316,6 +356,8 @@
 - **`conftest.py`**：`app_state` 换 `FakeRedis`；重置 `BUSINESS_TIMEOUT_MS`、`RATE_LIMIT_ALGORITHM` 等。  
 - **`@pytest.mark.smoke`**：少量快路径。  
 - **`@pytest.mark.contract`**：整个 `test_api_contract.py` 为契约/形状类用例。  
+- **`@pytest.mark.integration`**：需本机 Redis 等（可能 skip），见 `pytest.ini`。  
+- **文件速查**：`test_app.py`（主功能/韧性）、`test_fault_injection.py`（`/fault/*` 与 **`apply_faults`**）、`test_llm_client.py`（`LLMClient` 解析/后端选择，多 mock）、`test_api_contract.py`、`test_benchmark_compare.py`、`test_quality_gate.py`、`test_security_scan.py`、`test_replay_traffic.py`、`test_agent_eval_config.py`、`test_perf_regression.py`、`test_redis_integration.py`。  
 
 **不要在未起 Docker 时假设集成环境一定绿**；单测用 Fake Redis，不依赖真 Redis 容器即可跑大部分用例（以实际 import 与 fixture 为准）。
 
@@ -349,6 +391,7 @@
 | `reports/security_scan_latest.json`、`.md` | `security_scan.py` |
 | `reports/traffic_replay_latest.json`、`.md` | `replay_traffic.py` |
 | `reports/traffic_record_latest.jsonl` | 应用侧录制（`app.py`） |
+| `reports/fault_demo_latest.json` | `fault_demo.py` |
 | `agent-eval/reports/*` | 各 `agent-eval/scripts` 脚本 |
 
 ---
@@ -359,7 +402,7 @@
 - **压测脚本** 短连接、单机；压力上来时**客户端/宿主机**可能先瓶颈。  
 - **Grafana 大盘** 为教学展示，**不承诺**「全链路根因一步定位」。  
 - **Agent 评测** 为 **小样本+可复现+门禁** 的 demo，不替代大厂完整评测平台。  
-- **`k8s/`** 为可选学习；**CI 不依赖**。
+- **HTTP 故障注入**（`/fault/*`，Redis 状态）为**应用内协作式**模拟；**不等价**于网络 `tc`、杀 Pod 或客户端-only chaos。  
 
 ---
 
@@ -372,7 +415,8 @@
    - 保持阈值**可配置、可解释**，避免为「过关」随意放宽。
 
 2. **混沌与亚健康**  
-   - 在 **Linux 环境** 用 `tc` 等做 **网络延迟/丢包**，与现有 **杀容器/限 CPU（k8s 脚本）**、**Agent 端 chaos** 区分叙事。  
+   - **已实现**：应用内 **HTTP 故障注入**（§5 故障注入、`/fault/*`），与韧性/订单共用 Redis，便于演示与单测。  
+   - **未做**：在 **Linux** 用 **`tc`** 等做 **网络层** 延迟/丢包，与 **k8s 杀容器/限 CPU**、**Agent 端 chaos** 互补叙事。  
    - **I/O/异步日志** 属架构级，单独立项。
 
 3. **Agent**  

@@ -9,8 +9,10 @@
 
 | 路径 | 作用 |
 |------|------|
-| `app.py` | 订单服务**入口**；路由与逻辑在 **`chaos_service/`**（`http_api`、`resilience`、`store`、`traffic`） |
-| `chaos_service/` | 与 `app.py` 同镜像打包；**不要**在文档里与 `app.py` 重复维护第二套说明，见 `AI_PROJECT_CONTEXT` §2.1 A |
+| `app.py` | 订单服务**入口**；路由与逻辑在 **`chaos_service/`**（`http_api`、`resilience`、`store`、`fault_injection`、`traffic`） |
+| `chaos_service/` | 与 `app.py` 同镜像打包（含 **`fault_injection`**）；见 `AI_PROJECT_CONTEXT` §2.1 A / J |
+| `fault_demo.py` | 对已起服务做 **HTTP 故障注入**演示 → `reports/fault_demo_latest.json` |
+| `llm_client.py` / `llm_assist.py` | 可选 LLM 调用与 CLI（**不进 CI 主链**） |
 | `docker-compose.yml` | `app` 5000、`app_baseline` 5001、redis、prometheus、grafana |
 | `Dockerfile` | 应用镜像；`COPY app.py` + `COPY chaos_service` |
 | `benchmark_compare.py` | 5000/5001 对照压测 → `reports/benchmark_latest.json`、**`benchmark_history/`**、**`benchmark_trend_latest.*`** |
@@ -36,8 +38,10 @@
 |------|------|
 | `conftest.py` | `app_state`、`FakeRedis`、韧性相关重置 |
 | `test_app.py` | 功能与韧性；部分 `smoke` |
+| `test_fault_injection.py` | `/fault/*` 与 **`apply_faults`** |
+| `test_llm_client.py` | `LLMClient`（mock / 后端选择等） |
 | `test_api_contract.py` | 契约；`contract` 标记 |
-| `test_quality_gate.py` / `test_security_scan.py` / `test_agent_eval_config.py` / `test_benchmark_compare.py` 等 | 门禁、压测、重放、可选集成；以目录为准 |
+| `test_benchmark_compare.py` / `test_quality_gate.py` / `test_security_scan.py` / `test_replay_traffic.py` / `test_agent_eval_config.py` / `test_perf_regression.py` / `test_redis_integration.py` | 对应脚本与可选集成；细节见 `AI_PROJECT_CONTEXT` §9 |
 
 **常用**：`pytest -q`；与 CI 一致时先 `pytest -m smoke -q` 再全量（见 `qa.yml`）。
 

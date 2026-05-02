@@ -28,7 +28,7 @@
 | **从 0 吃透本项目**：读码顺序、学习方法、合格标准 | [`PROJECT_MASTERY_FROM_ZERO.md`](PROJECT_MASTERY_FROM_ZERO.md) |
 | **吃透打卡版**：每天看什么、做多少、怎么验收 | [`PROJECT_MASTERY_DAILY_CHECKLIST.md`](PROJECT_MASTERY_DAILY_CHECKLIST.md) |
 | **同一项目的三种讲法**：测开版 / 后端版 / BIOS-CI版 | [`PROJECT_POSITIONING_THREE_VERSIONS.md`](PROJECT_POSITIONING_THREE_VERSIONS.md) |
-| **跑通** Docker → 测压/门禁/Agent | [`run/GUIDE.md`](run/GUIDE.md) |
+| **HTTP 故障注入、LLM 辅助** | 见 **[`AI_PROJECT_CONTEXT.md`](../AI_PROJECT_CONTEXT.md)** §4～§6、`fault_demo.py`、`llm_assist.py` |
 | **文件/目录** 速查表（不展开语义） | [`intro/PROJECT_INTRO_FOR_READERS.md`](intro/PROJECT_INTRO_FOR_READERS.md) |
 | **面试/答辩** 简历、讲稿、压测样例 | [`interview/INTERVIEW_PREP.md`](interview/INTERVIEW_PREP.md) |
 | **原理与题库**（长文） | [`intro/DEEP_DIVE.md`](intro/DEEP_DIVE.md) |

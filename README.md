@@ -79,6 +79,7 @@ docker compose down
 | `scan` | `security_scan.py`（需可访问 `SECURITY_SCAN_BASE_URL`，默认 `http://127.0.0.1:5000`） |
 | `gate` | `quality_gate.py`（需先有 benchmark/security 等报告，见脚本） |
 | `qa` | test → bench → 等待 healthz → scan → gate |
+| **`qafull`** | 同 `qa`，再 `chaos_compare --strict`（对齐 CI 末尾 Agent 步） |
 
 **注意：** `bench` / `scan` / `qa` / `qafull` / `agenteval` 等依赖**已在运行的 API**（默认 `127.0.0.1:5000`）。请先执行 `.\run.ps1 -Task up` 或自行 `docker compose up -d`，再跑 `qa` 等任务。
 
@@ -109,9 +110,25 @@ docker compose down
 - `-m contract`：HTTP/JSON 契约（`tests/test_api_contract.py`）  
 - `-m integration`：需要本机 Redis 等（可能 skip）
 
+## 故障注入 API 与演示（可选）
+
+服务已运行时，可通过 **`/fault/*`** 在 **Redis** 中登记动态故障（**延迟 / 异常 / 随机丢请求 / 慢库模拟**），由 `http_api` 的 **`before_request`** 对业务路径生效；**`/fault`、探活、`/metrics` 路径不套注入**。开关：**`ENABLE_FAULT_INJECTION`**（默认开启）。详细语义与参数见 **`docs/AI_PROJECT_CONTEXT.md`** §4 / §5 / §6。
+
+快速查看状态：
+
+```powershell
+curl http://127.0.0.1:5000/fault/status
+```
+
+编排演示（写 `reports/fault_demo_latest.json`）：
+
+```powershell
+python fault_demo.py
+```
+
 ## LLM 辅助（可选）
 
-`llm_client.py` / `llm_assist.py` 依赖 **标准库 + 环境变量**（见 `llm_client.py` 文档字符串），无需额外 pip 包即可跑通「auto / ollama / openai 兼容端点」逻辑；云端调用需自行配置 `LLM_API_KEY` 等。
+`llm_client.py` / `llm_assist.py` 依赖 **标准库 + 环境变量**（见 `llm_client.py` 文档字符串），无需额外 pip 包即可跑通「auto / ollama / openai 兼容端点」逻辑；云端调用需自行配置 `LLM_API_KEY` 等。子命令示例：`python llm_assist.py generate-tests`、`python llm_assist.py analyze-report --report reports/benchmark_latest.json`。
 
 ## CI
 
@@ -119,7 +136,8 @@ docker compose down
 
 ## 目录速览
 
-- `chaos_service/`：领域逻辑（存储、HTTP 路由、韧性、故障注入、流量记录）
-- `tests/`：`conftest.py`（FakeRedis、fixtures）、分层测试
+- `chaos_service/`：领域逻辑（存储、HTTP 路由、韧性、**`fault_injection`**、流量记录）
+- `fault_demo.py`：对已起服务跑一轮故障注入演示
+- `tests/`：`conftest.py`（FakeRedis、fixtures）、分层测试（含 **`test_fault_injection`**、**`test_llm_client`** 等）
 - `agent-eval/`：工具调用评测与 chaos 对照脚本
 - `k8s/`、`grafana/`、`prometheus*.yml`：运维与可观测性示例

@@ -5,7 +5,7 @@
 
 **与 `docs/AI_PROJECT_CONTEXT.md` 的同一口径**  
 - **技术事实**（环境变量、CI 逐步、文件职责、实现细节、报告路径）以 **[`AI_PROJECT_CONTEXT.md`](AI_PROJECT_CONTEXT.md)** 为**准**；**本文若与之一句冲突，以全景文 + 源码为准**。  
-- **主服务形态**：`app.py` 为**薄入口**（Flask 实例、Prometheus 指标定义、环境常量、`validate_resilience_config`、委托注册）；业务与韧性**实现**在 **`chaos_service/`**（`http_api`、`resilience`、`store`、`traffic`）。**不要**把旧版「所有逻辑挤在一个 `app.py`」的心智带进来。  
+- **主服务形态**：`app.py` 为**薄入口**（Flask 实例、Prometheus 指标定义、环境常量、`validate_resilience_config`、委托注册）；业务与韧性**实现**在 **`chaos_service/`**（`http_api`、`resilience`、`store`、**`fault_injection`**、`traffic`）。**不要**把旧版「所有逻辑挤在一个 `app.py`」的心智带进来。  
 - **压测产物**：`benchmark_compare` 会写 `reports/benchmark_latest.json`、**`reports/benchmark_history/`** 归档、**`reports/benchmark_trend_latest.*`** 与历史对比；**`quality_gate.py` 当前门禁主读** `benchmark_latest.json`（及 security 报告）——trend 用于**人读/面试讲波动**，不替代上述门禁输入（见全景 §10～§11）。  
 - 更短「阶段 + 自测」路线见 [`LEARNING_PLAN_0BASIS_SDET.md`](LEARNING_PLAN_0BASIS_SDET.md)（与本文互补，不重复维护两套事实表）。
 
@@ -61,6 +61,8 @@
 - `quality_gate.py`
 - `security_scan.py`
 - `replay_traffic.py`
+- **`fault_demo.py`**（HTTP 故障注入演示，可选）
+- **`llm_client.py` / `llm_assist.py`**（可选 LLM 辅助，不进 CI 主链）
 
 ### B. Agent 评测子项目
 核心目标：
@@ -69,12 +71,11 @@
 主要目录：
 - `agent-eval/`
 
-### C. BIOS / CI 自动化子项目
+### C. BIOS / CI 自动化（岗位叙事，**非**本仓库独立代码树）
 核心目标：
-- 贴近你实习方向
-- 做启动日志解析和门禁
+- 贴近 **BIOS / 固件 CI** 岗面试时，用同一套「**解析日志 → Markdown/JSON 报告 → gate**」方法论**类比讲解**。
 
-主要目录：
+**当前仓库**：没有单独的 BIOS 日志解析子目录；技术面仍以 **§3.1 服务主链路** 与 **`agent-eval/`** 为主。叙事模板见 [`PROJECT_POSITIONING_THREE_VERSIONS.md`](PROJECT_POSITIONING_THREE_VERSIONS.md)；应用内 **`/fault/*`** 与 **`quality_gate`** 可作为「可控故障 + 门禁」的演示对照。
 
 所以你面试时可以把它理解为：
 
@@ -93,7 +94,7 @@
 - Flask app 初始化
 - 全局配置加载
 - Counter / Histogram 注册
-- 把路由、韧性、存储、流量录制拼起来
+- 把路由、韧性、存储、**故障注入钩子依赖**、流量录制拼起来
 
 你不要再把它当成“全部业务都在里面”的文件看。
 
@@ -101,6 +102,7 @@
 
 ### 服务模块层
 - `chaos_service/http_api.py`
+- `chaos_service/fault_injection.py`
 - `chaos_service/resilience.py`
 - `chaos_service/store.py`
 - `chaos_service/traffic.py`
@@ -115,9 +117,19 @@
 - `/order/<id>`
 - `/order/<id>/cancel`
 - `/live` `/ready` `/healthz` `/metrics`
+- **`/fault/status`、`/fault/inject`、`/fault/clear*`**（故障管理 API）
+- **`before_request`** 中对业务路径调用 **`fault_injection.apply_faults`**（`/fault` 与探活/指标路径除外）
 
 你可以理解为：
 > “接口和请求流程层”
+
+#### `fault_injection.py`
+管：
+- Redis 中 **`fault:{type}`** 活跃故障记录（TTL）
+- **`inject` / `clear` / `list` / `apply_faults`**（延迟、异常、随机拒请求、慢库模拟）
+
+你可以理解为：
+> “应用内协作式混沌 / 演示用故障层”
 
 #### `resilience.py`
 管：
@@ -162,7 +174,8 @@
 - benchmark 测试
 - quality gate 测试
 - replay 测试
-- BIOS/CI demo 测试
+- **故障注入**（`test_fault_injection.py`）
+- **LLM 客户端**（`test_llm_client.py`，多 mock）
 - Redis integration 测试
 
 ### 压测与门禁
@@ -218,7 +231,8 @@
 ### 第二步重点看
 1. `tests/test_app.py`
 2. `tests/test_api_contract.py`
-3. `tests/conftest.py`
+3. `tests/test_fault_injection.py`
+4. `tests/conftest.py`
 
 为什么先看测试：
 - 测试会告诉你“系统承诺了什么行为”
@@ -231,6 +245,7 @@
 - 限流是什么行为
 - 熔断半开是什么行为
 - cancel 幂等是什么行为
+- **`/fault/inject` 与 `apply_faults` 对业务路径的影响**（503 / 延迟 / 异常）
 
 如果测试看不懂，就说明你还没抓住系统的“对外语义”。
 
@@ -241,9 +256,10 @@
 ### 第三步读这个顺序
 1. `app.py`
 2. `chaos_service/http_api.py`
-3. `chaos_service/store.py`
-4. `chaos_service/resilience.py`
-5. `chaos_service/traffic.py`
+3. `chaos_service/fault_injection.py`
+4. `chaos_service/store.py`
+5. `chaos_service/resilience.py`
+6. `chaos_service/traffic.py`
 
 推荐方式：
 
@@ -624,7 +640,7 @@
 2. 自己跑一次 benchmark 并读懂报告
 3. 自己跑一次 gate 并说明为什么 pass/fail
 4. 自己给某个测试加一个新 case
-5. 自己给 BIOS log demo 换一个失败日志并看 gate 失败
+5. 自己用 **`POST /fault/inject`** 与 **`fault_demo.py`** 跑通一轮注入/恢复，并读 **`reports/fault_demo_latest.json`**；若要练「报告 → gate」，仍以 **`benchmark_latest` + `security_scan` + `quality_gate.py`** 为主；BIOS 岗位叙事见 `PROJECT_POSITIONING_THREE_VERSIONS.md`
 
 做完这 5 个动作，你对这个项目的掌控感会高很多。
 

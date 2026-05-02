@@ -177,6 +177,21 @@ $env:TRAFFIC_RECORD_ENABLED="true"
 .\run.ps1 -Task agentchaos
 ```
 
+### I. HTTP 故障注入演示（需要 5000 可访问）
+
+```powershell
+curl http://127.0.0.1:5000/fault/status
+python fault_demo.py
+```
+
+→ `reports/fault_demo_latest.json`。API 与开关见 **[`../AI_PROJECT_CONTEXT.md`](../AI_PROJECT_CONTEXT.md) §4～§6**。
+
+### J. LLM 辅助（可选，需 Ollama 或 `LLM_API_KEY`）
+
+```powershell
+python llm_assist.py --help
+```
+
 ---
 
 ## 第六步：关掉服务
@@ -202,7 +217,8 @@ docker compose down
 |------------|------|
 | 看任务列表 | `.\run.ps1 -Task help` |
 | 启动 / 停止服务 | `docker compose up --build -d` / `docker compose down` |
-| 测试 / 压测 / 扫描 / 门禁 / 一键 QA | `.\run.ps1 -Task test` / `bench` / `scan` / `gate` / `qa` |
+| 测试 / 压测 / 扫描 / 门禁 / 一键 QA | `.\run.ps1 -Task test` / `bench` / `scan` / `gate` / `qa` / **`qafull`** |
+| 故障演示 | `python fault_demo.py`（先起服务） |
 | 回放 | `.\run.ps1 -Task replay` |
 | Agent | `.\run.ps1 -Task agenteval` / `agentchaos` |
 

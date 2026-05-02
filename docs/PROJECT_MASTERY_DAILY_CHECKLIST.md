@@ -67,7 +67,7 @@
 - 1 份 `/order` 状态码解释表
 - 1 份 benchmark 报告解读
 - 1 份 gate 判定逻辑笔记
-- 1 份 BIOS/CI 子项目讲解笔记
+- 1 份岗位叙事笔记（**BIOS/CI 角度**：读 [`PROJECT_POSITIONING_THREE_VERSIONS.md`](PROJECT_POSITIONING_THREE_VERSIONS.md)；仓库内技术对照可写 **`/fault/*` + `fault_demo.py` + `quality_gate`**）
 
 ---
 
@@ -83,7 +83,7 @@
 | 6 | 质量链路：benchmark | 2.5h | benchmark 解读笔记 |
 | 7 | 质量链路：gate + security + replay | 3h | QA 闭环图 |
 | 8 | 工程化：CI / run.ps1 / docker-compose | 2.5h | 工程化总结 |
-| 9 | BIOS/CI 子项目 + Agent 了解 | 2.5h | 岗位绑定笔记 |
+| 9 | 岗位叙事（BIOS/CI）+ Agent 粗读 | 2.5h | 岗位绑定笔记 |
 | 10 | 脱稿讲项目 + 查漏补缺 | 3h | 面试讲稿草稿 |
 
 ---
@@ -127,8 +127,7 @@
 2. 服务主项目文件在哪  
 3. 测试在哪  
 4. benchmark/gate 在哪  
-5. BIOS 子项目在哪  
-
+5. BIOS/CI **叙事**对应哪篇文档；仓库里用什么**可运行**演示（如 **`fault_demo`、gate**）  
 建议笔记时间：
 - 20 分钟
 
@@ -159,7 +158,8 @@
 按顺序看：
 1. `tests/test_app.py`
 2. `tests/test_api_contract.py`
-3. `tests/conftest.py`
+3. `tests/test_fault_injection.py`（`/fault/*` 与注入语义）
+4. `tests/conftest.py`
 
 建议时间：
 - 90 分钟
@@ -197,7 +197,7 @@
 3. 并发幂等测试在测什么  
 
 ## 今日打卡标准
-- [ ] 看完 3 个测试文件
+- [ ] 看完 4 个测试文件
 - [ ] 整理完状态码行为表
 - [ ] 能说出 8 个测试名的目的
 
@@ -519,22 +519,25 @@
 
 ---
 
-## 11. Day 9：BIOS/CI 子项目 + Agent 粗读
+## 11. Day 9：岗位叙事（BIOS/CI）+ Agent 粗读
 
 ## 今日目标
-- 把项目和你的实习方向、秋招岗位绑定起来
+- 把项目和实习方向、秋招岗位**绑定表述**；搞清「叙事」与「仓库真实代码」的对应关系
 
 ## 今日工作量
 
 ### 阅读
-5. `agent-eval/README.md`（粗读）
+1. [`PROJECT_POSITIONING_THREE_VERSIONS.md`](../PROJECT_POSITIONING_THREE_VERSIONS.md)（BIOS/CI 讲法在哪一节）
+2. `agent-eval/README.md`（粗读）
+3. （可选）`docs/AI_PROJECT_CONTEXT.md` **§4 `/fault/*`、§8 `agent-eval`**
 
 建议时间：
 - 100 分钟
 
-### 动手
-运行：
+### 动手（可选，需服务已起）
 ```powershell
+curl http://127.0.0.1:5000/fault/status
+python fault_demo.py
 ```
 
 建议时间：
@@ -544,18 +547,19 @@
 写 2 段话：
 
 #### 第一段
-这个 BIOS/CI 子项目和你的实习有什么关系？
+**BIOS/CI 岗位**你要讲的是方法论类比（日志 → 报告 → gate），本仓库里你用哪些**真实模块**支撑这句话（例如 **`quality_gate`、`/fault/*`**）？
 
 #### 第二段
-为什么主项目更适合投测开/质量平台，而 BIOS 子项目更适合投 BIOS/自动化相关岗位？
+为什么主项目更适合投测开/质量平台，而 **BIOS/CI 叙事**更适合投固件自动化岗？（参照 `PROJECT_POSITIONING`）
 
 ## 今日验收
 你要能讲：
 
-> 我不是只有一个服务 demo，我还有一个贴近 BIOS/CI 自动化的日志门禁小项目。
+> 我不是只有一个服务 demo：我有 **可脚本化的 benchmark + gate**，还有 **HTTP 故障注入** 做对照演示；BIOS 岗用 **`PROJECT_POSITIONING`** 里的话术衔接。
 
 ## 今日打卡标准
-- [ ] 看完 BIOS 子项目代码
+- [ ] 读完 `PROJECT_POSITIONING` 相关节与 `agent-eval/README`
+- [ ] （可选）跑过 `fault/status` 或 `fault_demo.py`
 - [ ] 写完岗位绑定两段话
 
 ---
@@ -574,7 +578,7 @@
 1. 项目是什么
 2. 主服务做了什么
 3. 质量验证做了什么
-4. BIOS 子项目做了什么
+4. BIOS/CI **岗位叙事**你怎么讲（参照 `PROJECT_POSITIONING`，勿声称有独立 BIOS 代码树）
 
 #### 第 2 遍：2 分钟讲 `/order`
 必须讲：
@@ -606,7 +610,7 @@
 11. 为什么 quality gate 读报告  
 12. replay 的意义是什么  
 13. security scan 的边界是什么  
-14. BIOS 子项目为什么有价值  
+14. BIOS/CI **岗位叙事**为什么有价值（勿与仓库子目录混淆）  
 15. 这个项目最大的边界是什么  
 
 建议时间：
@@ -677,7 +681,7 @@
 - 讲清 run.ps1 / CI / compose：15
 
 ### E. 岗位绑定（15 分）
-- 讲清 BIOS 子项目价值：5
+- 讲清 **BIOS/CI 叙事 + `PROJECT_POSITIONING`** 与 **`fault`/`gate` 演示**的对应：5
 - 讲清主项目适合什么岗位：10
 
 ## 评分标准
@@ -696,7 +700,7 @@
 - 能独立讲主链路
 - 能独立解释幂等并发
 - 能独立读 benchmark/gate 报告
-- 能独立说明 BIOS 子项目的岗位价值
+- 能独立说明 **BIOS/CI 岗位叙事**与本仓库 **`fault`/`gate`/benchmark** 如何对齐（见 `PROJECT_POSITIONING`）
 
 做到这些，才算这轮“吃透计划”合格。
 
