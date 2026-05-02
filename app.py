@@ -16,13 +16,13 @@ from prometheus_client import Counter, Histogram
 
 from chaos_service import fault_injection, http_api, resilience, store, traffic
 
+# ---------------------------------------------------------------------------
+# 进程入口：Flask app + 可观测性 + 环境配置；CTX=本模块，供 http_api / chaos_service 读依赖与开关
+# ---------------------------------------------------------------------------
+
 
 class JSONFormatter(logging.Formatter):
-    """结构化 JSON 日志格式器。
-
-    每行输出一个 JSON 对象，包含 timestamp/level/logger/message，
-    方便日志聚合系统（ELK/Loki）解析和检索。
-    """
+    """单行 JSON 日志，便于 ELK/Loki 解析；可与 log_json_event 的 JSON 消息合并。"""
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
@@ -46,20 +46,24 @@ class JSONFormatter(logging.Formatter):
 
 _USE_JSON_LOG = os.getenv("LOG_FORMAT", "json").strip().lower() == "json"
 
+# 应用与日志
 app = Flask(__name__)
 if _USE_JSON_LOG:
     handler = logging.StreamHandler()
     handler.setFormatter(JSONFormatter())
     app.logger.handlers = [handler]
 app.logger.setLevel(logging.INFO)
+# 上下文：与 app 同模块，chaos_service 通过 ctx.redis_client / ctx.BUSINESS_TIMEOUT_MS 等访问（单测里可被 app_state 改写）
 CTX = sys.modules[__name__]
 
+# 下单临界区；Redis 客户端（单测常换 FakeRedis）
 db_lock = threading.Lock()
 redis_client = redis.Redis(
     host=os.getenv("REDIS_HOST", "localhost"),
     port=int(os.getenv("REDIS_PORT", "6379")),
     decode_responses=True,
 )
+# 韧性/限流/幂等/订单：默认来自 env，生产与单测均可改模块级变量覆盖
 RATE_LIMIT_PER_SEC = int(os.getenv("RATE_LIMIT_PER_SEC", "30"))
 RATE_LIMIT_ALGORITHM = os.getenv("RATE_LIMIT_ALGORITHM", "sliding").strip().lower()
 RATE_LIMIT_WINDOW_SEC = float(os.getenv("RATE_LIMIT_WINDOW_SEC", "1"))
@@ -80,6 +84,7 @@ CB_KEY_PROBE = "cb:probe"
 CIRCUIT_PROBE_TTL_SEC = int(os.getenv("CIRCUIT_PROBE_TTL_SEC", "30"))
 ENABLE_RESILIENCE = os.getenv("ENABLE_RESILIENCE", "true").lower() == "true"
 
+# Prometheus 指标（hooks 里打点）
 REQUEST_COUNT = Counter(
     "http_requests_total",
     "Total HTTP requests",
@@ -111,11 +116,15 @@ ORDER_IDEMPOTENT_CONFLICT = Counter(
     "Total idempotency-key payload conflicts",
 )
 
+# 可选流量落盘（异步队列 + 线程）
 TRAFFIC_RECORD_ENABLED = os.getenv("TRAFFIC_RECORD_ENABLED", "false").lower() == "true"
 TRAFFIC_RECORD_FILE = Path(os.getenv("TRAFFIC_RECORD_FILE", "reports/traffic_record_latest.jsonl"))
 TRAFFIC_RECORD_MAX_QUEUE = int(os.getenv("TRAFFIC_RECORD_MAX_QUEUE", "2000"))
 _record_queue = queue.Queue(maxsize=TRAFFIC_RECORD_MAX_QUEUE)
 _writer_thread = None
+
+
+# --- chaos_service 薄封装（历史调用点）；业务与路由主要在 http_api / store / resilience ---
 
 
 def _order_key(order_id: str) -> str:
@@ -211,12 +220,14 @@ def record_success():
     return resilience.record_success(CTX)
 
 
+# 配置合法则注册 hooks/routes；否则进程退出
 try:
     validate_resilience_config()
 except ValueError as e:
     app.logger.error("CONFIG invalid: %s", e, exc_info=True)
     raise SystemExit(1) from e
 
+# 挂载 before/after_request 与各路由（/order、探针、metrics、fault 等）
 traffic.init_traffic_recording(CTX)
 http_api.register_hooks(app, CTX)
 http_api.register_routes(app, CTX)
