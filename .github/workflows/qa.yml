@@ -89,8 +89,13 @@ jobs:
           SECURITY_FAIL_ON: medium
         run: python unified_quality_gate.py
 
+      - name: Unified platform summary (single-page report)
+        if: always()
+        run: python unified_summary.py
+
       # ---------- 报告产物（PR/Actions 里可下载）----------
       - name: Upload benchmark artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-report
@@ -101,6 +106,8 @@ jobs:
             reports/security_scan_latest.json
             reports/security_scan_latest.md
             reports/unified_quality_gate_latest.json
+            reports/unified_summary_latest.json
+            reports/unified_summary_latest.md
             reports/traffic_replay_latest.json
             reports/traffic_replay_latest.md
 

@@ -10,15 +10,38 @@
 
 | 阶段 | 优先级 | 目标（一句话） | 交付物 / 验收 | 主要代码与配置（预估） | 估时（参考） | 状态                                                         |
 |------|--------|----------------|---------------|-------------------------|--------------|--------------------------------------------------------------|
-| **P0** | P0     | **Trace 契约** | `trace_id`/`run_id`、**`steps[]`** 字段约定文档 + 示例 JSON；与现有 report 目录规则一致 | 本文件 + `agent-eval/scripts/*`（后续） | 0.5～1 天    | 进行中（本文已建）                                           |
+| **P0** | P0     | **报告契约 + 统一摘要** | **`trace`/`gate` JSON 字段约定** + **单一入口** **`unified_summary_latest.*`**（`final_decision`、`reasons[]`、`signals[]`、`artifacts[]`、`metrics_snapshot`） | **`unified_summary.py`**、本文件 P1/P2 草案、`qa.yml` | 0.5～1 天    | **已完成（MVP）**：统一摘要落地；Trace `steps[]` 约定见 **P1 草案** |
 | **P1** | P0     | **最小 Runtime Trace 落盘** | 每次 `run_agent_eval` 或 `chaos_compare` 一轮产生 **`agent-eval/reports/*trace*.json`**（或并入 eval JSON 的 `trace` 字段）；每步含 **tool、latency_ms、http_status、retry_count**（token 可选） | `agent-eval/scripts/tools_client.py`、`run_agent_eval.py`、`chaos_compare.py` | 3～7 天     | **已完成（MVP）**：`run_trace.py` + `agent_eval_trace_latest.json`；`agent_raw_latest.json` 各 case 含 `trace_steps[]`；`chaos_compare` 写 baseline/chaos 两份 trace。                                                       |
 | **P2** | P0     | **Unified Quality Gate（初版）** | 单一入口或薄编排：**`final_decision` + `reasons[]`** JSON；先 **串联** 根目录 `quality_gate.py` 逻辑 +（可选）`agent-eval` gate，**不**一夜重写 | **`unified_quality_gate.py`**；`qa.yml` 在 **`chaos_compare`** 之后 | 5～10 天    | **已完成（MVP）**：`reports/unified_quality_gate_latest.json`；`quality_gate` 失败类改为 **`QualityGateError`** 可汇总；`gate_agent_eval` 抽出 **`check_agent_eval_gate`**。                                                       |
 | **P3** | P1     | **Trend / 历史进门禁（可选规则）** | `benchmark_trend_latest` 或 history 中位数 **一条规则** 接入 unified gate；**可开关** | **`quality_gate.check_benchmark_trend_gate`**、`unified_quality_gate.py` | 2～5 天     | **已完成（MVP）**：默认 **`UNIFIED_GATE_TREND_ENABLED=0`**；开启后校验 **protected P95 / 历史中位数** 比值（**`UNIFIED_GATE_TREND_PROTECTED_P95_RATIO_MAX`**，默认 1.15）；无历史则 **SKIPPED**。           |
 | **P4** | P1     | **Semantic / Prompt A/B 回归（小步）** | 同数据集 **baseline vs candidate** 两次跑分 + 对比报告 + gate 阈值；Judge **抽检/可选** | **`agent-eval/scripts/prompt_regression.py`** + **`eval_config.yaml`** 的 **`prompt_regression:`** | 1～2 周     | **已完成（MVP）**：两遍 eval 独立 raw/score 路径（**`AGENT_EVAL_*` 环境变量**）；**`AGENT_PROMPT_SUFFIX`** 区分 Ollama 规划提示；**`prompt_regression_latest.*`** + 相对回落门禁。                                                       |
 | **P5** | P2     | **Agent Runtime 混沌** | 对 **trace 中某一步** 注入失败/延迟，观测 retry/循环/token；**后置** | `agent-eval` + 或 fault 编排 | 1～2 周+     | 未开始                                                       |
-| **P6** | P2     | **Trace 静态可视化** | 从 trace JSON 生成 **HTML/Mermaid** 时间线；**不做**复杂 SPA | 小脚本 + `reports/` 或 `agent-eval/reports/` | 2～5 天     | 未开始                                                       |
+| **P6** | P2     | **报告「平台感」与 Trace 可视化** | **统一摘要页**（必读）+ 可选从 trace 生成 **HTML/Mermaid**（不做复杂 SPA） | **`unified_summary.py`**；可视化脚本后置 | 2～5 天     | **摘要已完成（MVP）**：`reports/unified_summary_latest.json` / `.md`；**静态时间线**仍 **未开始**                                                       |
 
 **图例**：`未开始` → `进行中` → `已完成`；完成后在本表与 **`AI_PROJECT_CONTEXT` §11/§13** 回写路径与行为。
+
+---
+
+## 阶段 P0b：统一平台摘要（`unified_summary_latest`）
+
+CI 与本地在 **`unified_quality_gate`** 之后运行 **`unified_summary.py`**（Gate 失败时仍生成摘要，便于排障）。**`schema_version`: 1** 起稳定字段：
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": 1710000000,
+  "final_decision": "PASS",
+  "reasons": [],
+  "signals": [],
+  "artifacts": [{ "id": "benchmark", "path": "reports/benchmark_latest.json", "present": true, "category": "benchmark" }],
+  "metrics_snapshot": {},
+  "gate_checks": {}
+}
+```
+
+- **reasons**：来自 **`unified_quality_gate`** 与各辅线硬失败（如 **`token_black_hole_gate`**、**`prompt_regression`**）。  
+- **signals**：非致命提示（P95 比值、重试 delta、幻觉率等）。  
+- **artifacts**：标准产物路径与会否落盘（含 chaos 两轮 trace）。
 
 ---
 

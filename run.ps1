@@ -73,7 +73,7 @@ switch ($Task) {
   gate          quality_gate（仅 benchmark+security；新鲜度/重试/阈值）
   unified       unified_quality_gate（汇总 PASS/FAIL JSON；需 bench+scan+通常 agent_eval_latest）
   qa            test + bench + 等待 healthz + scan + gate
-  qafull        test + bench + 等待 healthz + scan + chaos_compare --strict + unified（对齐 CI）
+  qafull        test + bench + 等待 healthz + scan + chaos_compare --strict + unified + **platform summary**
   scan          安全扫描门禁（security_scan.py）
   replay        回放录制流量（无录制文件时可回放内置 sample-data）
   faultdemo     故障注入演示（注入延迟/丢包 → 观察降级 → 清除 → 观察恢复）
@@ -138,6 +138,7 @@ switch ($Task) {
         python agent-eval/scripts/chaos_compare.py --strict
         Set-DefaultQualityGateEnv
         python unified_quality_gate.py
+        python unified_summary.py
     }
     "agenteval" {
         Set-DefaultAgentEvalEnv

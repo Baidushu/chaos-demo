@@ -4,7 +4,7 @@
 
 > **标准说法**：我设计了一个轻量级质量工程平台，通过混沌注入、压测和质量门禁，实现系统在不同故障场景下的自动化评估，并用于辅助上线决策。
 
-底座仍是 **Flask + Redis** 订单 API（限流 / 熔断 / 幂等 / 超时 / 可观测 / **HTTP 故障注入**），配套 **pytest** 分层、`benchmark_compare`、`security_scan`、**`quality_gate`** / **`unified_quality_gate`**、`agent-eval`（辅线）、Grafana/Prometheus 与 GitHub Actions。**测试怎么分层、failure model 怎么说**见 **[`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md)**；**压测报告怎么讲 trade-off**见 **[`docs/PERFORMANCE_ANALYSIS.md`](docs/PERFORMANCE_ANALYSIS.md)**。**接口自动化框架（pytest + httpx + YAML + Allure）保底样例**见 **[`api-automation-demo/README.md`](api-automation-demo/README.md)**。
+底座仍是 **Flask + Redis** 订单 API（限流 / 熔断 / 幂等 / 超时 / 可观测 / **HTTP 故障注入**），配套 **pytest** 分层、`benchmark_compare`、`security_scan`、**`quality_gate`** / **`unified_quality_gate`** / **`unified_summary`**（一页汇总）、`agent-eval`（辅线）、Grafana/Prometheus 与 GitHub Actions。
 
 ## 环境要求
 
@@ -137,7 +137,7 @@ python fault_demo.py
 
 ## CI
 
-- **主链**：`.github/workflows/qa.yml` — 安装 `requirements-dev.txt` → pytest → compose → benchmark → 安全扫描 → **`chaos_compare --strict`** → **`unified_quality_gate.py`**（写 **`unified_quality_gate_latest.json`**）。  
+- **主链**：`.github/workflows/qa.yml` — 安装 `requirements-dev.txt` → pytest → compose → benchmark → 安全扫描 → **`chaos_compare --strict`** → **`unified_quality_gate.py`** → **`unified_summary.py`**（**`reports/unified_summary_latest.*`** 一页汇总；Gate 失败时仍生成摘要并随 artifact 上传）。  
 - **接口自动化样例**：`.github/workflows/api-automation-demo.yml` — 独立安装 `api-automation-demo/requirements.txt`，pytest 并上传 **Allure** 原始结果 artifact。
 
 ## 目录速览

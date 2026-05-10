@@ -37,7 +37,7 @@
 
 #### CI 主线 = **发布决策**，不是「跑完测试图个心安」
 
-建议按顺序背：**单测**（FakeRedis，快）→ **起真实栈**（compose）→ **压测**（`benchmark_compare` → `benchmark_latest.json`）→ **安全扫描** → **`chaos_compare --strict`**（辅线）→ **`unified_quality_gate.py`**（读 benchmark + security + **`agent_eval_latest.json`**，汇总 **`final_decision` / `reasons[]`**，**任一 FAIL 则 `exit 1`**）。仅压测+安全、不跑 agent 时仍可用单独 **`quality_gate.py`**。  
+建议按顺序背：**单测**（FakeRedis，快）→ **起真实栈**（compose）→ **压测**（`benchmark_compare` → `benchmark_latest.json`）→ **安全扫描** → **`chaos_compare --strict`**（辅线）→ **`unified_quality_gate.py`**（读 benchmark + security + **`agent_eval_latest.json`**，**任一 FAIL 则 `exit 1`**）→ **`unified_summary.py`**（**平台统一摘要**：`final_decision`、`reasons[]`、`signals[]`、**`artifacts[]`** 与 **`metrics_snapshot`**；**只读汇总**，Gate 失败时 CI 仍生成便于排障）。仅压测+安全、不跑 agent 时仍可用 **`quality_gate.py`**，或设 **`UNIFIED_GATE_SKIP_AGENT=1`**。  
 
 **要点**：`quality_gate` 的目标是 **基于指标的合入/发布判断**，不是单纯「全绿」；详见 **§7**、**§10**。
 
@@ -92,7 +92,8 @@
 | `benchmark_compare.py` | HTTP 压测 5000 vs 5001；写 `reports/benchmark_latest.json`、**历史归档**、**`benchmark_trend_latest.*`**（见 §2.1 B） |
 | `security_scan.py` | 对 `SECURITY_SCAN_BASE_URL` 做轻量安全扫描，写 `reports/security_scan_latest.json` 与 `.md` |
 | `quality_gate.py` | 读 benchmark + security 报告，超阈值或报告过旧则 `exit 1`（**不含** agent-eval；CI 主链已改用 **`unified_quality_gate.py`**） |
-| `unified_quality_gate.py` | **P2 + P3**：串联 benchmark/security、**可选 benchmark_trend**、**`gate_agent_eval`**；写 **`reports/unified_quality_gate_latest.json`**；**`UNIFIED_GATE_SKIP_AGENT=1`** 跳过 agent；**`UNIFIED_GATE_TREND_ENABLED=1`** 等见 **§10** |
+| `unified_quality_gate.py` | **P2 + P3**：串联 benchmark/security、**可选 benchmark_trend**、**`gate_agent_eval`**；写 **`reports/unified_quality_gate_latest.json`**（见 **§10**） |
+| `unified_summary.py` | **平台统一摘要（P0/P6）**：聚合 gate / benchmark / trend / eval / chaos / prompt / trace 路径，写 **`reports/unified_summary_latest.json`** 与 **`.md`**（**`schema_version`**）；不改变子报告格式 |
 | `replay_traffic.py` | 从 JSONL 流式读请求并重放，写 `reports/traffic_replay_*.json/.md` |
 | `fault_demo.py` | 需**已运行**的 API：编排注入延迟/丢包/清除，写 **`reports/fault_demo_latest.json`**（演示用） |
 | `llm_client.py` | 可选 LLM 客户端（**`LLM_BACKEND`** 等，见 §6） |
@@ -282,7 +283,7 @@
 | `test` | 装 dev 依赖 + `pytest -q` 全量 |
 | `bench` / `scan` / `gate` / **`unified`** | 压测 / 安全扫描 / 仅主链 **`quality_gate`** / **P2 汇总门禁** |
 | `qa` | pip + 全量 pytest + bench + 循环等 healthz + scan + gate |
-| **`qafull`** | 同 `qa` 但去掉单独 `quality_gate`，在 **`chaos_compare --strict`** 之后跑 **`unified_quality_gate.py`**（与 CI 主链一致） |
+| **`qafull`** | 同 `qa` 但去掉单独 `quality_gate`，在 **`chaos_compare --strict`** → **`unified_quality_gate.py`** → **`unified_summary.py`**（与 CI 主链一致） |
 | `agenteval` | 依次跑 `run_agent_eval` → `score` → `gate` |
 | `agentchaos` | 仅 `chaos_compare.py` |
 | `replay` | 默认读 `reports/traffic_record_latest.jsonl` 回放 |
@@ -389,7 +390,7 @@
 
 ## 7. CI 流水线（`.github/workflows/qa.yml` 摘要）
 
-**面试口径**：这条流水线本质是在做 **发布/合入决策**——在 agent 评测产出报告后，由 **`unified_quality_gate.py`** 汇总 **压测 + 安全 +（可选）相对历史的 P95 趋势 + agent 分数** 并写出 **`final_decision`**，失败则 **fail 掉 PR**；不是「跑完 pytest 就算过」。
+**面试口径**：这条流水线本质是在做 **发布/合入决策**——在 agent 评测产出报告后，由 **`unified_quality_gate.py`** 汇总 **压测 + 安全 +（可选）相对历史的 P95 趋势 + agent 分数** 并写出 **`final_decision`**，失败则 **fail 掉 PR**。**`unified_summary.py`** 在门禁之后 **始终生成**（`if: always()`）单一 **Markdown + JSON 摘要**（`reasons` / `signals` / 产物路径表 / `metrics_snapshot`），便于 PR 与面试官一眼看清「平台级」结论，**不改变** gate 的退出语义。
 
 单 job 内顺序（与**本地**可略有工具差异，但意图一致）：
 
@@ -402,7 +403,8 @@
 7. `python security_scan.py`（`SECURITY_SCAN_BASE_URL` 等）  
 8. `python agent-eval/scripts/chaos_compare.py --strict`（`TOOLS_BASE_URL`、`AGENT_MODE`、`AGENT_EVAL_SKIP_JUDGE` 等）—— **辅线**：工具调用稳定性对照，**非**「AI 主能力」叙事  
 9. `python unified_quality_gate.py`（`SECURITY_FAIL_ON` 等）：再校验 **benchmark + security + agent_eval** 报告，写 **`reports/unified_quality_gate_latest.json`**  
-10. 上传 `reports/` 与 `agent-eval/reports/` 部分产物为 artifact（含 **`unified_quality_gate_latest.json`**）  
+10. `python unified_summary.py`：写 **`reports/unified_summary_latest.json`** 与 **`.md`**（Gate 失败时仍执行，便于留档）  
+11. 上传 `reports/` 与 `agent-eval/reports/` 部分产物为 artifact（含 **`unified_quality_gate_latest.json`**、**`unified_summary_latest.*`**；上传步常用 **`if: always()`** 以便失败时仍能取报告）  
 
 **并行工作流**：**`api-automation-demo.yml`** 在子目录安装独立依赖并跑 **pytest + Allure**，不上主链 Docker；**接口自动化**展示用，**不参与**上述发布决策主链。
 
@@ -429,7 +431,7 @@
 - **`@pytest.mark.smoke`**：少量快路径。  
 - **`@pytest.mark.contract`**：整个 `test_api_contract.py` 为契约/形状类用例。  
 - **`@pytest.mark.integration`**：需本机 Redis 等（可能 skip），见 `pytest.ini`。  
-- **文件速查**：`test_app.py`（主功能/韧性）、`test_fault_injection.py`（`/fault/*` 与 **`apply_faults`**）、`test_llm_client.py`（`LLMClient` 解析/后端选择，多 mock）、`test_api_contract.py`、`test_benchmark_compare.py`、`test_quality_gate.py`、`test_security_scan.py`、`test_replay_traffic.py`、`test_agent_eval_config.py`、**`test_prompt_regression.py`（P4 对比逻辑）**、`test_perf_regression.py`、`test_redis_integration.py`。  
+- **文件速查**：`test_app.py`（主功能/韧性）、`test_fault_injection.py`（`/fault/*` 与 **`apply_faults`**）、`test_llm_client.py`（`LLMClient` 解析/后端选择，多 mock）、`test_api_contract.py`、`test_benchmark_compare.py`、`test_quality_gate.py`、`test_security_scan.py`、`test_replay_traffic.py`、`test_agent_eval_config.py`、**`test_prompt_regression.py`（P4 对比逻辑）**、**`test_unified_summary.py`（平台摘要）**、`test_perf_regression.py`、`test_redis_integration.py`。  
 - **`api-automation-demo/tests/`**：**另一棵** pytest 树（YAML + httpx + Allure），**不属于**本节「根 `tests/`」集合；细节 **§2.1 L**。  
 
 **不要在未起 Docker 时假设集成环境一定绿**；单测用 Fake Redis，不依赖真 Redis 容器即可跑大部分用例（以实际 import 与 fixture 为准）。
@@ -460,6 +462,11 @@
 - 写出 **`reports/unified_quality_gate_latest.json`**：`final_decision`（`PASS`/`FAIL`）、`reasons[]`、`checks`（含 **`benchmark_trend`**：`PASS`/`FAIL`/`SKIPPED`，以及 `benchmark` / `security` / `agent_eval`）。  
 - **`UNIFIED_GATE_SKIP_AGENT=1`**：不读 agent 报告（`checks.agent_eval` 为 **`SKIPPED`**），适用于只做压测+安全的本地片段。
 
+**`unified_summary.py`（平台一页汇总）**
+
+- **只读**既有子报告，写出 **`reports/unified_summary_latest.json`**（**`schema_version`: 1**）与 **`.md`**：`final_decision`（合并 **unified_gate** 与 **`chaos_compare` 的 `token_black_hole_gate`**、**`prompt_regression`** 等硬失败）、**`reasons[]`**、**`signals[]`**（P95 比值、重试 delta、幻觉率等提示）、**`artifacts[]`**（`benchmark` / `gate` / `eval` / `trace` 等分类与是否落盘）、**`metrics_snapshot`**。  
+- 环境变量 **`UNIFIED_SUMMARY_P95_REGRESSION_WARN`**、**`UNIFIED_SUMMARY_RETRY_SURGE_WARN`** 控制写入 `signals` 的阈值。
+
 ---
 
 ## 11. 报告文件路径速查
@@ -474,6 +481,7 @@
 | `reports/traffic_record_latest.jsonl` | 应用侧录制（`app.py`） |
 | `reports/fault_demo_latest.json` | `fault_demo.py` |
 | `reports/unified_quality_gate_latest.json` | **`unified_quality_gate.py`**（`final_decision`、`reasons[]`、分项 `checks`） |
+| `reports/unified_summary_latest.json`、`.md` | **`unified_summary.py`**（平台一页汇总；**`artifacts[]`** 指向 benchmark / trend / gate / eval / trace / prompt 等） |
 | `agent-eval/reports/*` | 各 `agent-eval/scripts` 脚本 |
 | `agent-eval/reports/agent_eval_trace_latest.json` | **`run_agent_eval.py`** 的 **HTTP 工具调用 trace**（每轮一步 `steps[]`：tool / latency_ms / http_status / retry_index 等）；路径可用环境变量 **`AGENT_TRACE_FILE`** 覆盖；**`AGENT_TRACE_ENABLED=0`** 可关闭落盘。 |
 | `agent-eval/reports/prompt_regression_latest.json`、`.md` | **`prompt_regression.py`**（baseline vs candidate 指标 delta + **`gate_pass` / `gate_reasons`**） |
