@@ -464,6 +464,8 @@
 | `reports/traffic_record_latest.jsonl` | 应用侧录制（`app.py`） |
 | `reports/fault_demo_latest.json` | `fault_demo.py` |
 | `agent-eval/reports/*` | 各 `agent-eval/scripts` 脚本 |
+| `agent-eval/reports/agent_eval_trace_latest.json` | **`run_agent_eval.py`** 的 **HTTP 工具调用 trace**（每轮一步 `steps[]`：tool / latency_ms / http_status / retry_index 等）；路径可用环境变量 **`AGENT_TRACE_FILE`** 覆盖；**`AGENT_TRACE_ENABLED=0`** 可关闭落盘。 |
+| `agent-eval/reports/agent_trace_baseline.json`、`agent_trace_chaos.json` | **`chaos_compare.py`** 分别为无混沌与 mixed 两轮子进程设置的 trace 输出，避免互相覆盖；对比报告正文会列路径。 |
 
 ---
 

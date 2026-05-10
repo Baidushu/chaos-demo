@@ -15,19 +15,24 @@ REPORT_PATH = ROOT / "reports" / "agent_eval_latest.json"
 RAW_REPORT_PATH = ROOT / "reports" / "agent_raw_latest.json"
 COMPARE_JSON = ROOT / "reports" / "chaos_compare_latest.json"
 COMPARE_MD = ROOT / "reports" / "chaos_compare_latest.md"
+TRACE_BASELINE_PATH = ROOT / "reports" / "agent_trace_baseline.json"
+TRACE_CHAOS_PATH = ROOT / "reports" / "agent_trace_chaos.json"
 
 # 子进程防挂起（大模型/网络异常时仍可在 CI 内失败，默认 20 分钟）
 _CHAOS_SUBPROC_TIMEOUT = int(os.environ.get("CHAOS_SUBPROC_TIMEOUT_SEC", "1200"))
 
 
-def run_cmd(args):
+def run_cmd(args, extra_env=None):
     try:
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
         proc = subprocess.run(
             args,
             capture_output=True,
             text=True,
             cwd=str(REPO_ROOT),
-            env=os.environ.copy(),
+            env=env,
             timeout=_CHAOS_SUBPROC_TIMEOUT,
         )
     except subprocess.TimeoutExpired as e:
@@ -44,8 +49,9 @@ def run_cmd(args):
     return proc.stdout.strip()
 
 
-def run_one(mode: str, fail_rate: float = 0.0, latency_ms: int = 0):
+def run_one(mode: str, fail_rate: float = 0.0, latency_ms: int = 0, trace_file: str | None = None):
     #运行一次评测，mode：故障模式，fail_rate：失败率，latency_ms：延迟毫秒
+    extra_env = {"AGENT_TRACE_FILE": trace_file} if trace_file else None
     run_cmd(
         [
             sys.executable,
@@ -56,7 +62,8 @@ def run_one(mode: str, fail_rate: float = 0.0, latency_ms: int = 0):
             str(fail_rate),
             "--latency-ms",
             str(latency_ms),
-        ]
+        ],
+        extra_env=extra_env,
     )
     #评分
     run_cmd([sys.executable, str(SCORE_SCRIPT)])
@@ -193,10 +200,10 @@ def main():
     retry_path_surge_max = float(os.getenv("CHAOS_RETRY_PATH_TOKEN_SURGE_MAX", "0.60"))
     # 小样本（如 10 条）下仅 1 条重试时重试税方差大，默认 0.60 减少误杀；可收紧为 0.50
     retry_tax_max = float(os.getenv("CHAOS_RETRY_TAX_MAX", "0.60"))
-    #运行基线和混合故障场景
-    baseline = run_one("none", 0.0, 0)
+    #运行基线和混合故障场景（各写到独立 trace 文件，避免后一轮覆盖前一轮）
+    baseline = run_one("none", 0.0, 0, trace_file=str(TRACE_BASELINE_PATH))
     #混沌组：混合麻烦（mixed），45%的请求会失败，每个请求延迟 180ms
-    chaos = run_one("mixed", 0.45, 180)
+    chaos = run_one("mixed", 0.45, 180, trace_file=str(TRACE_CHAOS_PATH))
 
     t_ratio = token_surge_ratio(baseline["avg_token_per_task"], chaos["avg_token_per_task"])
     chaos_max_token = float(chaos.get("max_token_per_task") or 0.0)
@@ -256,6 +263,10 @@ def main():
     result = {
         "baseline": baseline,
         "chaos": chaos,
+        "agent_trace_files": {
+            "baseline": str(TRACE_BASELINE_PATH),
+            "chaos": str(TRACE_CHAOS_PATH),
+        },
         "delta": {
             "tool_selection_accuracy": chaos["tool_selection_accuracy"] - baseline["tool_selection_accuracy"],
             "arg_accuracy": chaos["arg_accuracy"] - baseline["arg_accuracy"],
@@ -377,6 +388,11 @@ def main():
         f"{('N/A' if baseline_retry_tax is None else f'{baseline_retry_tax:.2%}')}",
         f"- retry_tax_pass: {retry_tax_gate_pass}",
         f"- **token_black_hole_gate_pass: {token_black_hole_gate_pass}**",
+        "",
+        "## Runtime trace (HTTP tool calls)",
+        "",
+        f"- Baseline trace JSON: `{TRACE_BASELINE_PATH}`",
+        f"- Mixed chaos trace JSON: `{TRACE_CHAOS_PATH}`",
         "",
         "## Top token cases (for debugging)",
         "",

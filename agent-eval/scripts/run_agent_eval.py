@@ -8,6 +8,12 @@ import urllib.error
 from pathlib import Path
 from urllib import request
 
+from run_trace import (
+    append_case_trace,
+    default_trace_path,
+    new_trace_document,
+    write_trace_document,
+)
 from tools_client import ToolsClient
 
 
@@ -195,6 +201,7 @@ def execute_plan(case, client: ToolsClient):
                 item_name=args.get("item_name", ""),
                 quantity=quantity,
                 address=args.get("address", ""),
+                retry_index=0,
             )
             tool_results.append({"tool": tool, "result": res})
             current_try = 0
@@ -205,6 +212,7 @@ def execute_plan(case, client: ToolsClient):
                     item_name=args.get("item_name", ""),
                     quantity=quantity,
                     address=args.get("address", ""),
+                    retry_index=current_try,
                 )
                 tool_results.append({"tool": f"{tool}_retry_{current_try}", "result": res})
 
@@ -314,22 +322,52 @@ def main():
         fail_rate=args.fail_rate,
         latency_ms=args.latency_ms,
     )
+    trace_enabled = os.getenv("AGENT_TRACE_ENABLED", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    trace_doc = None
+    if trace_enabled:
+        trace_doc = new_trace_document(
+            eval_kind="run_agent_eval",
+            tools_base_url=base,
+            chaos_mode=args.chaos,
+            chaos_fail_rate=args.fail_rate,
+            chaos_latency_ms=args.latency_ms,
+        )
     cases = load_cases()
     results = []
     for case in cases:
+        trace_steps: list = []
+        if trace_enabled:
+            client.set_trace_buffer(trace_steps)
+        else:
+            client.set_trace_buffer(None)
         out = execute_plan(case, client)
-        results.append(
-            {
-                "id": case["id"],
-                "category": case["category"],
-                "input": case["input"],
-                "expected_tools": case.get("expected_tools", []),
-                "expected_args": case.get("expected_args", {}),
-                "forbidden_behavior": case.get("forbidden_behavior", []),
-                **out,
-                "timestamp": int(time.time()),
-            }
-        )
+        row = {
+            "id": case["id"],
+            "category": case["category"],
+            "input": case["input"],
+            "expected_tools": case.get("expected_tools", []),
+            "expected_args": case.get("expected_args", {}),
+            "forbidden_behavior": case.get("forbidden_behavior", []),
+            **out,
+            "timestamp": int(time.time()),
+        }
+        if trace_enabled:
+            row["trace_steps"] = trace_steps
+            append_case_trace(
+                trace_doc,
+                {
+                    "case_id": case["id"],
+                    "category": case.get("category"),
+                    "input": case["input"],
+                    "steps": trace_steps,
+                },
+            )
+        results.append(row)
 
     payload = {
         "generated_at": int(time.time()),
@@ -341,6 +379,10 @@ def main():
     with RAW_RESULT_PATH.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     print(f"Saved raw result: {RAW_RESULT_PATH}")
+    if trace_enabled and trace_doc is not None:
+        tpath = default_trace_path(REPORT_DIR)
+        write_trace_document(trace_doc, tpath)
+        print(f"Saved run trace: {tpath}")
 
 
 if __name__ == "__main__":
