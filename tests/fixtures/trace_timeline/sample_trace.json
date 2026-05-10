@@ -1,0 +1,43 @@
+{
+  "trace_id": "00000000-0000-0000-0000-000000000001",
+  "run_id": "00000000-0000-0000-0000-000000000002",
+  "generated_at": 1710000000,
+  "schema_version": 1,
+  "eval_kind": "test",
+  "tools_base_url": "http://127.0.0.1:5000",
+  "chaos_mode": "none",
+  "chaos_fail_rate": 0,
+  "chaos_latency_ms": 0,
+  "cases": [
+    {
+      "case_id": "c1",
+      "input": "hello",
+      "steps": [
+        {
+          "step": 1,
+          "type": "tool_call",
+          "tool": "place_order",
+          "method": "POST",
+          "path": "/order",
+          "retry_index": 0,
+          "latency_ms": 10,
+          "http_status": 201,
+          "error": null,
+          "injected_fault": false
+        },
+        {
+          "step": 2,
+          "type": "tool_call",
+          "tool": "get_order",
+          "method": "GET",
+          "path": "/order/x",
+          "retry_index": 1,
+          "latency_ms": 5.2,
+          "http_status": 200,
+          "error": null,
+          "injected_fault": true
+        }
+      ]
+    }
+  ]
+}

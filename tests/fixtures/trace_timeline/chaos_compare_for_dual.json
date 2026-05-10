@@ -1,0 +1,6 @@
+{
+  "agent_trace_files": {
+    "baseline": "tests/fixtures/trace_timeline/trace_baseline.json",
+    "chaos": "tests/fixtures/trace_timeline/trace_chaos.json"
+  }
+}

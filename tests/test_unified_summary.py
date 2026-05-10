@@ -60,3 +60,22 @@ def test_token_black_hole_marks_fail(monkeypatch):
     finally:
         if chaos_p.exists():
             chaos_p.unlink()
+
+
+def test_release_markdown_sections(monkeypatch):
+    monkeypatch.setattr(us, "PATHS", _fake_paths())
+    doc = us.build_summary()
+    md = us._write_markdown(doc)
+    assert "# Release Summary" in md
+    assert "## Checks" in md and "## Key regressions" in md
+    assert "## Trace highlights" in md and "## Trend" in md
+    assert "**semantic_eval**:" in md
+    assert "checks_summary" in doc
+
+
+def test_trend_consecutive_regression_bullet(monkeypatch):
+    monkeypatch.setattr(us, "PATHS", _fake_paths())
+    monkeypatch.setattr(us, "_protected_p95_history_series", lambda: [100.0, 110.0, 120.0, 130.0])
+    doc = us.build_summary()
+    assert doc["metrics_snapshot"].get("benchmark_history_consecutive_p95_regressions") == 3
+    assert any("连续" in b for b in doc["trend_bullets"])

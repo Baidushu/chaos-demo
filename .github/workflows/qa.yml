@@ -83,6 +83,10 @@ jobs:
           AGENT_EVAL_SKIP_JUDGE: "1"
         run: python agent-eval/scripts/chaos_compare.py --strict
 
+      - name: Trace timeline (Mermaid + static HTML)
+        if: always()
+        run: python trace_timeline.py
+
       # ---------- 统一门禁（压测 + 安全 + agent 分数；需上方报告已生成）----------
       - name: Unified quality gate (benchmark + security + agent-eval)
         env:
@@ -108,6 +112,9 @@ jobs:
             reports/unified_quality_gate_latest.json
             reports/unified_summary_latest.json
             reports/unified_summary_latest.md
+            reports/trace_timeline_latest.mmd
+            reports/trace_timeline_latest.html
+            reports/trace_timeline_meta.json
             reports/traffic_replay_latest.json
             reports/traffic_replay_latest.md
 

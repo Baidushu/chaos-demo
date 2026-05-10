@@ -3,3 +3,7 @@
 
 pytest>=8.0.0
 locust>=2.0.0
+# api-automation-demo（并入 qa.yml 后对真服务跑 YAML 驱动用例）
+httpx>=0.27.0
+PyYAML>=6.0.1
+allure-pytest>=2.13.5

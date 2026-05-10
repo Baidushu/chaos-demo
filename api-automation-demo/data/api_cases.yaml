@@ -1,6 +1,7 @@
-# 数据驱动用例：CI 默认无 BASE_URL 时用 mock；本地可指向 chaos-demo 服务做联调。
+# 数据驱动用例：不设 API_AUTOMATION_BASE_URL 时用 YAML 内 mock；GitHub qa-pipeline 在
+# compose 就绪后对该地址做真请求。
 #
-# 联调示例（仓库根已 docker compose up）:
+# 本地联调（仓库根 docker compose up 后）:
 #   set API_AUTOMATION_BASE_URL=http://127.0.0.1:5000
 #   cd api-automation-demo && pytest -v
 
