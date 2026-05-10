@@ -4,10 +4,13 @@ import sys
 import time
 from pathlib import Path
 
-#失败函数
+class QualityGateError(Exception):
+    """可由 `unified_quality_gate` 捕获；`main()` 仍会转为进程退出码 1。"""
+
+
 def fail(msg: str):
     print(f"[QUALITY_GATE] FAIL: {msg}")
-    sys.exit(1)
+    raise QualityGateError(msg)
 
 
 def severity_rank(level: str) -> int:
@@ -24,11 +27,23 @@ def run_check_with_retries(check_name: str, check_fn):
 
     for i in range(1, attempts + 1):
         try:
-            check_fn()
+            ret = check_fn()
             if i > 1:
                 print(f"[QUALITY_GATE] {check_name} PASS after retry {i}/{attempts}")
-            return
+            return ret
         except SystemExit as e:
+            if getattr(e, "code", None) in (0, None):
+                return None
+            last_err = e
+            if i >= attempts:
+                raise
+            print(
+                f"[QUALITY_GATE] {check_name} retrying {i}/{attempts} "
+                f"(wait={delay_ms}ms)"
+            )
+            if delay_sec > 0:
+                time.sleep(delay_sec)
+        except QualityGateError as e:
             last_err = e
             if i >= attempts:
                 raise
@@ -40,6 +55,7 @@ def run_check_with_retries(check_name: str, check_fn):
                 time.sleep(delay_sec)
     if last_err is not None:
         raise last_err
+    return None
 
 
 def load_benchmark_thresholds():
@@ -163,7 +179,7 @@ def check_security_gate():#安全门禁：检查安全扫描报告，如果发�
         if require_report:
             fail("security report missing: reports/security_scan_latest.json (run security_scan.py first)")
         print("[QUALITY_GATE] security SKIP: report missing and gate not required")
-        return
+        return "SKIPPED"
 
     with report_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -189,11 +205,15 @@ def check_security_gate():#安全门禁：检查安全扫描报告，如果发�
     if highest >= threshold:
         fail("security findings reached fail threshold")
     print("[QUALITY_GATE] security PASS")
+    return "PASS"
 
 
 def main():
-    run_check_with_retries("benchmark", check_benchmark_gate)
-    run_check_with_retries("security", check_security_gate)
+    try:
+        run_check_with_retries("benchmark", check_benchmark_gate)
+        run_check_with_retries("security", check_security_gate)
+    except QualityGateError:
+        sys.exit(1)
     print("[QUALITY_GATE] PASS")
 
 

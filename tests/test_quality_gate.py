@@ -44,7 +44,7 @@ def test_check_report_freshness_fails_when_stale(monkeypatch):
     monkeypatch.setenv("QUALITY_GATE_CHECK_FRESHNESS", "1")
     monkeypatch.setenv("QUALITY_GATE_MAX_REPORT_AGE_SEC", "1")
     data = {"generated_at": int(time.time()) - 10}
-    with pytest.raises(SystemExit):
+    with pytest.raises(qg.QualityGateError):
         qg.check_report_freshness(data, "benchmark")
 
 

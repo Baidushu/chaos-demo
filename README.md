@@ -4,7 +4,7 @@
 
 > **标准说法**：我设计了一个轻量级质量工程平台，通过混沌注入、压测和质量门禁，实现系统在不同故障场景下的自动化评估，并用于辅助上线决策。
 
-底座仍是 **Flask + Redis** 订单 API（限流 / 熔断 / 幂等 / 超时 / 可观测 / **HTTP 故障注入**），配套 **pytest** 分层、`benchmark_compare`、`security_scan`、`quality_gate`、`agent-eval`（辅线）、Grafana/Prometheus 与 GitHub Actions。**测试怎么分层、failure model 怎么说**见 **[`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md)**；**压测报告怎么讲 trade-off**见 **[`docs/PERFORMANCE_ANALYSIS.md`](docs/PERFORMANCE_ANALYSIS.md)**。**接口自动化框架（pytest + httpx + YAML + Allure）保底样例**见 **[`api-automation-demo/README.md`](api-automation-demo/README.md)**。
+底座仍是 **Flask + Redis** 订单 API（限流 / 熔断 / 幂等 / 超时 / 可观测 / **HTTP 故障注入**），配套 **pytest** 分层、`benchmark_compare`、`security_scan`、**`quality_gate`** / **`unified_quality_gate`**、`agent-eval`（辅线）、Grafana/Prometheus 与 GitHub Actions。**测试怎么分层、failure model 怎么说**见 **[`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md)**；**压测报告怎么讲 trade-off**见 **[`docs/PERFORMANCE_ANALYSIS.md`](docs/PERFORMANCE_ANALYSIS.md)**。**接口自动化框架（pytest + httpx + YAML + Allure）保底样例**见 **[`api-automation-demo/README.md`](api-automation-demo/README.md)**。
 
 ## 环境要求
 
@@ -81,7 +81,8 @@ docker compose down
 | `test` | 安装 dev 依赖并 **pytest 全量** |
 | `bench` | `benchmark_compare.py`（默认压测相关环境变量见脚本内说明） |
 | `scan` | `security_scan.py`（需可访问 `SECURITY_SCAN_BASE_URL`，默认 `http://127.0.0.1:5000`） |
-| `gate` | `quality_gate.py`（需先有 benchmark/security 等报告，见脚本） |
+| `gate` | `quality_gate.py`（仅 benchmark+security，需先有报告） |
+| `unified` | `unified_quality_gate.py`（汇总 + agent_eval；与 CI 末步一致，需先有 **chaos_compare** 或等价产物） |
 | `qa` | test → bench → 等待 healthz → scan → gate |
 | **`qafull`** | 同 `qa`，再 `chaos_compare --strict`（对齐 CI 末尾 Agent 步） |
 
@@ -136,7 +137,7 @@ python fault_demo.py
 
 ## CI
 
-- **主链**：`.github/workflows/qa.yml` — 安装 `requirements-dev.txt` → pytest → compose → benchmark → 安全扫描 → `quality_gate` → `chaos_compare --strict`。  
+- **主链**：`.github/workflows/qa.yml` — 安装 `requirements-dev.txt` → pytest → compose → benchmark → 安全扫描 → **`chaos_compare --strict`** → **`unified_quality_gate.py`**（写 **`unified_quality_gate_latest.json`**）。  
 - **接口自动化样例**：`.github/workflows/api-automation-demo.yml` — 独立安装 `api-automation-demo/requirements.txt`，pytest 并上传 **Allure** 原始结果 artifact。
 
 ## 目录速览

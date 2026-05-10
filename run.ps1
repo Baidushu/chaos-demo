@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("help", "up", "down", "test", "bench", "gate", "scan", "replay", "faultdemo", "qa", "qafull", "agenteval", "agentchaos", "agentvariance")]
+    [ValidateSet("help", "up", "down", "test", "bench", "gate", "unified", "scan", "replay", "faultdemo", "qa", "qafull", "agenteval", "agentchaos", "agentvariance")]
     [string]$Task
 )
 
@@ -70,9 +70,10 @@ switch ($Task) {
   up / down     Docker Compose 启动 / 停止
   test          安装 dev 依赖并 pytest 全量（分层见 pytest.ini：-m smoke / contract）
   bench         benchmark_compare（默认注入 BENCHMARK_WARMUP/SEED/RUNS；输出多轮中位数、趋势与历史）
-  gate          quality_gate（含新鲜度/重试去抖/阈值；可选校验 p95 波动）
+  gate          quality_gate（仅 benchmark+security；新鲜度/重试/阈值）
+  unified       unified_quality_gate（汇总 PASS/FAIL JSON；需 bench+scan+通常 agent_eval_latest）
   qa            test + bench + 等待 healthz + scan + gate
-  qafull         与 qa 相同，末尾再跑 chaos_compare --strict（对齐 CI 完整链）
+  qafull        test + bench + 等待 healthz + scan + chaos_compare --strict + unified（对齐 CI）
   scan          安全扫描门禁（security_scan.py）
   replay        回放录制流量（无录制文件时可回放内置 sample-data）
   faultdemo     故障注入演示（注入延迟/丢包 → 观察降级 → 清除 → 观察恢复）
@@ -98,6 +99,10 @@ switch ($Task) {
     "gate" {
         Set-DefaultQualityGateEnv
         python quality_gate.py
+    }
+    "unified" {
+        Set-DefaultQualityGateEnv
+        python unified_quality_gate.py
     }
     "scan" {
         Set-DefaultSecurityScanRetryEnv
@@ -128,11 +133,11 @@ switch ($Task) {
         Wait-AppHealthz
         Set-DefaultSecurityScanRetryEnv
         python security_scan.py
-        Set-DefaultQualityGateEnv
-        python quality_gate.py
         Set-DefaultAgentEvalEnv
         Wait-AppHealthz
         python agent-eval/scripts/chaos_compare.py --strict
+        Set-DefaultQualityGateEnv
+        python unified_quality_gate.py
     }
     "agenteval" {
         Set-DefaultAgentEvalEnv

@@ -37,7 +37,7 @@
 
 #### CI 主线 = **发布决策**，不是「跑完测试图个心安」
 
-建议按顺序背：**单测**（FakeRedis，快）→ **起真实栈**（compose）→ **压测**（`benchmark_compare` → `benchmark_latest.json`）→ **安全扫描** → **`quality_gate`**（读报告，**超限则 `exit 1`**，相当于 **no-go**）→ **`chaos_compare --strict`**（辅线：工具调用在扰动下是否失控）。  
+建议按顺序背：**单测**（FakeRedis，快）→ **起真实栈**（compose）→ **压测**（`benchmark_compare` → `benchmark_latest.json`）→ **安全扫描** → **`chaos_compare --strict`**（辅线）→ **`unified_quality_gate.py`**（读 benchmark + security + **`agent_eval_latest.json`**，汇总 **`final_decision` / `reasons[]`**，**任一 FAIL 则 `exit 1`**）。仅压测+安全、不跑 agent 时仍可用单独 **`quality_gate.py`**。  
 
 **要点**：`quality_gate` 的目标是 **基于指标的合入/发布判断**，不是单纯「全绿」；详见 **§7**、**§10**。
 
@@ -91,7 +91,8 @@
 | `Dockerfile` | 构建应用镜像；复制 `app.py` 与 `chaos_service/` |
 | `benchmark_compare.py` | HTTP 压测 5000 vs 5001；写 `reports/benchmark_latest.json`、**历史归档**、**`benchmark_trend_latest.*`**（见 §2.1 B） |
 | `security_scan.py` | 对 `SECURITY_SCAN_BASE_URL` 做轻量安全扫描，写 `reports/security_scan_latest.json` 与 `.md` |
-| `quality_gate.py` | 读 benchmark + security 报告，超阈值或报告过旧则 `exit 1` |
+| `quality_gate.py` | 读 benchmark + security 报告，超阈值或报告过旧则 `exit 1`（**不含** agent-eval；CI 主链已改用 **`unified_quality_gate.py`**） |
+| `unified_quality_gate.py` | **P2**：串联 `quality_gate` 中 benchmark/security 校验 + **`gate_agent_eval`** 阈值；写 **`reports/unified_quality_gate_latest.json`**；可选 **`UNIFIED_GATE_SKIP_AGENT=1`** 跳过 agent 报告 |
 | `replay_traffic.py` | 从 JSONL 流式读请求并重放，写 `reports/traffic_replay_*.json/.md` |
 | `fault_demo.py` | 需**已运行**的 API：编排注入延迟/丢包/清除，写 **`reports/fault_demo_latest.json`**（演示用） |
 | `llm_client.py` | 可选 LLM 客户端（**`LLM_BACKEND`** 等，见 §6） |
@@ -269,7 +270,7 @@
    `pytest tests/ -m smoke -q`（快）再 `pytest tests/ -q`（全量，与 GitHub CI 二段式一致）  
 4. 压测（需服务已起）：`python benchmark_compare.py` → 生成 `reports/benchmark_latest.json`；可选 `-n`、`-c`、`--seed`、`--warmup` 或 `BENCHMARK_*`（见 §2.1 B）。**CI** 通常设 `BENCHMARK_WARMUP` 与 `BENCHMARK_SEED` 以稳定首轮。    
 5. 安全扫描：`python security_scan.py`（默认打 `http://127.0.0.1:5000`）  
-6. 统一门禁：先确保步骤 4、5 已有报告，再 `python quality_gate.py`  
+6. **仅主链后半**时：先跑通 agent 评分（如 `agent-eval/scripts/chaos_compare.py` 或 `run_agent_eval` → `score_agent_eval`），再 `python unified_quality_gate.py`（依赖 **`agent-eval/reports/agent_eval_latest.json`**）。若只做压测+安全、不跑 agent，可用 `python quality_gate.py`，或设 **`UNIFIED_GATE_SKIP_AGENT=1`**。  
 7. （可选）故障演示：服务已起时 `python fault_demo.py`；或自行 `curl` 调 **`/fault/inject`** 等（见 §4）。  
 8. （可选）LLM：`python llm_assist.py --help`（需 Ollama 或 **`LLM_API_KEY`**，见 §6）。  
 9. （可选）**`api-automation-demo`**：在 `api-automation-demo/` 下 `pip install -r requirements.txt` 后 **`pytest`**（或带 **`--alluredir`**）；联调已起服务时设 **`API_AUTOMATION_BASE_URL`**；见 **§2.1 L**。
@@ -279,9 +280,9 @@
 |------|------|
 | `up` / `down` | compose 起 / 停 |
 | `test` | 装 dev 依赖 + `pytest -q` 全量 |
-| `bench` / `scan` / `gate` | 压测 / 安全扫描 / 门禁（scan/gate 前建议服务与 bench 已就绪） |
+| `bench` / `scan` / `gate` / **`unified`** | 压测 / 安全扫描 / 仅主链 **`quality_gate`** / **P2 汇总门禁** |
 | `qa` | pip + 全量 pytest + bench + 循环等 healthz + scan + gate |
-| **`qafull`** | 同 `qa` 后再 **`chaos_compare --strict`**（对齐 CI 含 Agent 步） |
+| **`qafull`** | 同 `qa` 但去掉单独 `quality_gate`，在 **`chaos_compare --strict`** 之后跑 **`unified_quality_gate.py`**（与 CI 主链一致） |
 | `agenteval` | 依次跑 `run_agent_eval` → `score` → `gate` |
 | `agentchaos` | 仅 `chaos_compare.py` |
 | `replay` | 默认读 `reports/traffic_record_latest.jsonl` 回放 |
@@ -388,7 +389,7 @@
 
 ## 7. CI 流水线（`.github/workflows/qa.yml` 摘要）
 
-**面试口径**：这条流水线本质是在做 **发布/合入决策**——最后几步读**压测与安全报告**，由 **`quality_gate`** 决定是否 **fail 掉 PR**；不是「跑完 pytest 就算过」。
+**面试口径**：这条流水线本质是在做 **发布/合入决策**——在 agent 评测产出报告后，由 **`unified_quality_gate.py`** 汇总 **压测 + 安全 + agent 分数** 并写出 **`final_decision`**，失败则 **fail 掉 PR**；不是「跑完 pytest 就算过」。
 
 单 job 内顺序（与**本地**可略有工具差异，但意图一致）：
 
@@ -399,9 +400,9 @@
 5. 等待 `http://127.0.0.1:5000/healthz` 可用  
 6. `python benchmark_compare.py`（CI 常设 **`BENCHMARK_WARMUP`**、**`BENCHMARK_SEED`**、**`BENCHMARK_RUNS: "3"`** 等以稳态/多轮中位数）  
 7. `python security_scan.py`（`SECURITY_SCAN_BASE_URL` 等）  
-8. `python quality_gate.py`（`SECURITY_FAIL_ON` 等）  
-9. `python agent-eval/scripts/chaos_compare.py --strict`（`TOOLS_BASE_URL`、`AGENT_MODE`、`AGENT_EVAL_SKIP_JUDGE` 等）—— **辅线**：工具调用稳定性对照，**非**「AI 主能力」叙事  
-10. 上传 `reports/` 与 `agent-eval/reports/` 部分产物为 artifact  
+8. `python agent-eval/scripts/chaos_compare.py --strict`（`TOOLS_BASE_URL`、`AGENT_MODE`、`AGENT_EVAL_SKIP_JUDGE` 等）—— **辅线**：工具调用稳定性对照，**非**「AI 主能力」叙事  
+9. `python unified_quality_gate.py`（`SECURITY_FAIL_ON` 等）：再校验 **benchmark + security + agent_eval** 报告，写 **`reports/unified_quality_gate_latest.json`**  
+10. 上传 `reports/` 与 `agent-eval/reports/` 部分产物为 artifact（含 **`unified_quality_gate_latest.json`**）  
 
 **并行工作流**：**`api-automation-demo.yml`** 在子目录安装独立依赖并跑 **pytest + Allure**，不上主链 Docker；**接口自动化**展示用，**不参与**上述发布决策主链。
 
@@ -446,9 +447,16 @@
 **`quality_gate.py`**
 
 - 读 `reports/benchmark_latest.json`：校验 `generated_at` 新鲜度（可关/可调最大年龄 `QUALITY_GATE_MAX_REPORT_AGE_SEC`）；对 **protected** 与 **baseline** 的**中位数结果**比较 **error_rate、p99、protected p95 相对 baseline 的回归系数、degraded+error 不稳定度** 等，且可选校验 **`QUALITY_GATE_P95_STDEV_MAX`**。  
-- 读 `reports/security_scan_latest.json`：按 `SECURITY_FAIL_ON`（`low`/`medium`/`high`）看 findings 是否超线；可 `QUALITY_GATE_REQUIRE_SECURITY=0` 无报告时跳过。  
+- 读 `reports/security_scan_latest.json`：按 `SECURITY_FAIL_ON`（`low`/`medium`/`high`）看 findings 是否超线；可 `QUALITY_GATE_REQUIRE_SECURITY=0` 无报告时跳过（「跳过」在输出里记为 **`SKIPPED`**）。  
 - **`run_check_with_retries`**：benchmark 与 security 子检查可 **重试**次与间隔。  
+- 失败时抛出 **`QualityGateError`**（供 **`unified_quality_gate.py`** 汇总）；直接运行本脚本仍以 **退出码 1** 结束。  
 - 控制台打印 `security_report_meta`：含 **`context_aware`** 与报告里的 **`base_url`（以 target= 打日志）**。
+
+**`unified_quality_gate.py`（P2）**
+
+- 依次调用与 `quality_gate` **相同**的 benchmark/security 校验逻辑，并对 **`agent-eval/reports/agent_eval_latest.json`** 执行与 **`gate_agent_eval.py`** **相同**的阈值比较。  
+- 写出 **`reports/unified_quality_gate_latest.json`**：`final_decision`（`PASS`/`FAIL`）、`reasons[]`、`checks`（`benchmark` / `security` / `agent_eval` 各 `PASS`/`FAIL`/`SKIPPED`）。  
+- **`UNIFIED_GATE_SKIP_AGENT=1`**：不读 agent 报告（`checks.agent_eval` 为 **`SKIPPED`**），适用于只做压测+安全的本地片段。
 
 ---
 
@@ -463,6 +471,7 @@
 | `reports/traffic_replay_latest.json`、`.md` | `replay_traffic.py` |
 | `reports/traffic_record_latest.jsonl` | 应用侧录制（`app.py`） |
 | `reports/fault_demo_latest.json` | `fault_demo.py` |
+| `reports/unified_quality_gate_latest.json` | **`unified_quality_gate.py`**（`final_decision`、`reasons[]`、分项 `checks`） |
 | `agent-eval/reports/*` | 各 `agent-eval/scripts` 脚本 |
 | `agent-eval/reports/agent_eval_trace_latest.json` | **`run_agent_eval.py`** 的 **HTTP 工具调用 trace**（每轮一步 `steps[]`：tool / latency_ms / http_status / retry_index 等）；路径可用环境变量 **`AGENT_TRACE_FILE`** 覆盖；**`AGENT_TRACE_ENABLED=0`** 可关闭落盘。 |
 | `agent-eval/reports/agent_trace_baseline.json`、`agent_trace_chaos.json` | **`chaos_compare.py`** 分别为无混沌与 mixed 两轮子进程设置的 trace 输出，避免互相覆盖；对比报告正文会列路径。 |

@@ -9,14 +9,19 @@ ROOT = Path(__file__).resolve().parents[1]
 SCORE_RESULT_PATH = ROOT / "reports" / "agent_eval_latest.json"
 
 
+class AgentGateError(Exception):
+    """供 `unified_quality_gate` 捕获；`main()` 仍会以退出码 1 结束。"""
+
+
 def fail(msg: str):
     print(f"[AGENT_GATE] FAIL: {msg}")
-    sys.exit(1)
+    raise AgentGateError(msg)
 
 
-def main():
+def check_agent_eval_gate(report_path: Path | None = None) -> dict:
+    path = report_path or SCORE_RESULT_PATH
     g = load_gate_thresholds()
-    with SCORE_RESULT_PATH.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8") as f:
         r = json.load(f)
 
     if r["tool_selection_accuracy"] < g["tool_selection_accuracy_min"]:
@@ -42,6 +47,14 @@ def main():
         piv = r.get("planner_invalid_rate", 0)
         fail(f"planner_invalid_rate too high: {piv:.2%} (max {g['planner_invalid_rate_max']:.2%})")
 
+    return r
+
+
+def main():
+    try:
+        r = check_agent_eval_gate()
+    except AgentGateError:
+        sys.exit(1)
     print("[AGENT_GATE] PASS (thresholds from agent-eval/config/eval_config.yaml)")
     print(
         "[AGENT_GATE] "

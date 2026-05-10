@@ -1,3 +1,5 @@
+# 主质量流水线：先 pytest（FakeRedis/进程内），再起 compose 做集成/黑盒/基准/安全/门禁/评测。
+# 与本地对齐：requirements-dev.txt；冒烟见 pytest.ini marker smoke。
 name: qa-pipeline
 
 on:
@@ -9,6 +11,7 @@ jobs:
   test-and-gate:
     runs-on: ubuntu-latest
     steps:
+      # ---------- 环境与依赖 ----------
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -22,12 +25,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      # ---------- 单测（无需 Docker）：快失败 + 全量 ----------
       - name: Pytest (smoke, fail-fast)
         run: pytest tests/ -m smoke -q
 
       - name: Pytest (full)
         run: pytest tests/ -q
 
+      # ---------- 真栈：compose + 等 /healthz ----------
       - name: Start services
         run: docker compose up --build -d
 
@@ -42,6 +47,21 @@ jobs:
           echo "App not ready in time"
           exit 1
 
+      # ---------- 黑盒：api-automation 对运行中的服务（非仅 mock）----------
+      - name: API automation (YAML, black-box vs running app)
+        env:
+          API_AUTOMATION_BASE_URL: http://127.0.0.1:5000
+        working-directory: api-automation-demo
+        run: pytest --alluredir=allure-results -q
+
+      - name: Upload Allure results (api-automation)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-automation-allure-results
+          path: api-automation-demo/allure-results
+
+      # ---------- 性能对比 / 安全扫描 / 总门禁 ----------
       - name: Benchmark compare
         env:
           BENCHMARK_WARMUP: "20"
@@ -55,11 +75,7 @@ jobs:
           SECURITY_FAIL_ON: medium
         run: python security_scan.py
 
-      - name: Quality gate (benchmark + security)
-        env:
-          SECURITY_FAIL_ON: medium
-        run: python quality_gate.py
-
+      # ---------- Agent 评测（连同一 TOOLS_BASE_URL；SKIP_JUDGE 省 LLM）----------
       - name: Agent eval (chaos compare, strict token gate)
         env:
           TOOLS_BASE_URL: http://127.0.0.1:5000
@@ -67,6 +83,13 @@ jobs:
           AGENT_EVAL_SKIP_JUDGE: "1"
         run: python agent-eval/scripts/chaos_compare.py --strict
 
+      # ---------- 统一门禁（压测 + 安全 + agent 分数；需上方报告已生成）----------
+      - name: Unified quality gate (benchmark + security + agent-eval)
+        env:
+          SECURITY_FAIL_ON: medium
+        run: python unified_quality_gate.py
+
+      # ---------- 报告产物（PR/Actions 里可下载）----------
       - name: Upload benchmark artifact
         uses: actions/upload-artifact@v4
         with:
@@ -77,6 +100,7 @@ jobs:
             reports/benchmark_trend_latest.md
             reports/security_scan_latest.json
             reports/security_scan_latest.md
+            reports/unified_quality_gate_latest.json
             reports/traffic_replay_latest.json
             reports/traffic_replay_latest.md
 
