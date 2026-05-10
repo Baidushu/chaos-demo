@@ -54,7 +54,7 @@
 #### 性能回归与历史趋势（王炸说法 + 诚实边界）
 
 - **门禁已做的回归**：`quality_gate.py` 对 **protected** 相对同一次压测里的 **baseline** 校验 **p95 回归倍数**（`QUALITY_GATE_P95_REGRESSION_FACTOR_MAX` 等），并约束 **error / p99 / unstable / p95 抖动** —— **变差可 fail**。  
-- **历史归档**：`benchmark_history/` + **`benchmark_trend_latest.*`** 与**历史中位数**对比 delta，适合**讲波动、讲趋势**；**当前 `quality_gate` 不直接读取 trend 文件**（演进项：可将 trend 接入为第二道闸）。  
+- **历史归档**：`benchmark_history/` + **`benchmark_trend_latest.*`** 与**历史中位数**对比 delta，适合**讲波动、讲趋势**；**`quality_gate.py` 主链仍不读 trend**；**可选**在 **`unified_quality_gate.py`** 中通过 **`UNIFIED_GATE_TREND_ENABLED=1`** 启用 **P3** 与历史 P95 比值的单条规则（默认关，见 **§10**）。  
 
 #### 测试分层一句（对齐 [`TEST_STRATEGY.md`](TEST_STRATEGY.md)）
 
@@ -92,7 +92,7 @@
 | `benchmark_compare.py` | HTTP 压测 5000 vs 5001；写 `reports/benchmark_latest.json`、**历史归档**、**`benchmark_trend_latest.*`**（见 §2.1 B） |
 | `security_scan.py` | 对 `SECURITY_SCAN_BASE_URL` 做轻量安全扫描，写 `reports/security_scan_latest.json` 与 `.md` |
 | `quality_gate.py` | 读 benchmark + security 报告，超阈值或报告过旧则 `exit 1`（**不含** agent-eval；CI 主链已改用 **`unified_quality_gate.py`**） |
-| `unified_quality_gate.py` | **P2**：串联 `quality_gate` 中 benchmark/security 校验 + **`gate_agent_eval`** 阈值；写 **`reports/unified_quality_gate_latest.json`**；可选 **`UNIFIED_GATE_SKIP_AGENT=1`** 跳过 agent 报告 |
+| `unified_quality_gate.py` | **P2 + P3**：串联 benchmark/security、**可选 benchmark_trend**、**`gate_agent_eval`**；写 **`reports/unified_quality_gate_latest.json`**；**`UNIFIED_GATE_SKIP_AGENT=1`** 跳过 agent；**`UNIFIED_GATE_TREND_ENABLED=1`** 等见 **§10** |
 | `replay_traffic.py` | 从 JSONL 流式读请求并重放，写 `reports/traffic_replay_*.json/.md` |
 | `fault_demo.py` | 需**已运行**的 API：编排注入延迟/丢包/清除，写 **`reports/fault_demo_latest.json`**（演示用） |
 | `llm_client.py` | 可选 LLM 客户端（**`LLM_BACKEND`** 等，见 §6） |
@@ -389,7 +389,7 @@
 
 ## 7. CI 流水线（`.github/workflows/qa.yml` 摘要）
 
-**面试口径**：这条流水线本质是在做 **发布/合入决策**——在 agent 评测产出报告后，由 **`unified_quality_gate.py`** 汇总 **压测 + 安全 + agent 分数** 并写出 **`final_decision`**，失败则 **fail 掉 PR**；不是「跑完 pytest 就算过」。
+**面试口径**：这条流水线本质是在做 **发布/合入决策**——在 agent 评测产出报告后，由 **`unified_quality_gate.py`** 汇总 **压测 + 安全 +（可选）相对历史的 P95 趋势 + agent 分数** 并写出 **`final_decision`**，失败则 **fail 掉 PR**；不是「跑完 pytest 就算过」。
 
 单 job 内顺序（与**本地**可略有工具差异，但意图一致）：
 
@@ -452,10 +452,11 @@
 - 失败时抛出 **`QualityGateError`**（供 **`unified_quality_gate.py`** 汇总）；直接运行本脚本仍以 **退出码 1** 结束。  
 - 控制台打印 `security_report_meta`：含 **`context_aware`** 与报告里的 **`base_url`（以 target= 打日志）**。
 
-**`unified_quality_gate.py`（P2）**
+**`unified_quality_gate.py`（P2 + P3）**
 
 - 依次调用与 `quality_gate` **相同**的 benchmark/security 校验逻辑，并对 **`agent-eval/reports/agent_eval_latest.json`** 执行与 **`gate_agent_eval.py`** **相同**的阈值比较。  
-- 写出 **`reports/unified_quality_gate_latest.json`**：`final_decision`（`PASS`/`FAIL`）、`reasons[]`、`checks`（`benchmark` / `security` / `agent_eval` 各 `PASS`/`FAIL`/`SKIPPED`）。  
+- **P3（可选）**：若 **`UNIFIED_GATE_TREND_ENABLED=1`**，读取 **`reports/benchmark_trend_latest.json`**：当存在 **历史中位数 `protected_p95_ms`** 时，要求当前 protected P95 相对该中位数的比值 ≤ **`UNIFIED_GATE_TREND_PROTECTED_P95_RATIO_MAX`**（默认 **1.15**）；无历史或缺字段时该项为 **`SKIPPED`**。可设 **`UNIFIED_GATE_TREND_REQUIRE_REPORT=0`** 在缺文件时跳过；**`UNIFIED_GATE_TREND_CHECK_FRESHNESS=1`** 时对 trend 报告做与 §10 相同风格的新鲜度校验。  
+- 写出 **`reports/unified_quality_gate_latest.json`**：`final_decision`（`PASS`/`FAIL`）、`reasons[]`、`checks`（含 **`benchmark_trend`**：`PASS`/`FAIL`/`SKIPPED`，以及 `benchmark` / `security` / `agent_eval`）。  
 - **`UNIFIED_GATE_SKIP_AGENT=1`**：不读 agent 报告（`checks.agent_eval` 为 **`SKIPPED`**），适用于只做压测+安全的本地片段。
 
 ---
@@ -495,7 +496,7 @@
 以下与维护者/秋招学习路线对齐，**实现时需改代码并回写本文相关章节**。
 
 1. **质量门禁**  
-   - 历史多份 `benchmark_*.json` 归档，做 **中位数/分位** 或与上版 **偏差** 再判失败，降低单次抖动误杀。  
+   - 历史多份 `benchmark_*.json` 归档，做 **中位数/分位** 或与上版 **偏差** 再判失败，降低单次抖动误杀；**P3（可选）**已在 **`unified_quality_gate`** 中接 **`benchmark_trend_latest`**（默认关，见 **§10**）。  
    - **统一门禁出口**（`final_decision` + `reasons[]`）见 **[`plan/PLATFORM_CONVERGENCE_ROADMAP.md`](plan/PLATFORM_CONVERGENCE_ROADMAP.md)** **P2**。  
    - 保持阈值**可配置、可解释**，避免为「过关」随意放宽。
 

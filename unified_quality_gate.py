@@ -1,6 +1,6 @@
 """
-Unified quality gate（P2）：串联 benchmark + security（quality_gate）与 agent-eval 门禁，
-写出 `reports/unified_quality_gate_latest.json`（final_decision + reasons + checks）。
+Unified quality gate（P2 + P3）：串联 benchmark + security（quality_gate）、可选 **benchmark_trend**，
+与 agent-eval 门禁；写出 `reports/unified_quality_gate_latest.json`（final_decision + reasons + checks）。
 """
 from __future__ import annotations
 
@@ -46,6 +46,13 @@ def run_unified() -> dict:
     except qg.QualityGateError as e:
         checks["security"] = "FAIL"
         reasons.append(f"security: {e}")
+
+    try:
+        trend_ret = qg.run_check_with_retries("benchmark_trend", qg.check_benchmark_trend_gate)
+        checks["benchmark_trend"] = trend_ret if trend_ret else "PASS"
+    except qg.QualityGateError as e:
+        checks["benchmark_trend"] = "FAIL"
+        reasons.append(f"benchmark_trend: {e}")
 
     skip_agent = os.getenv("UNIFIED_GATE_SKIP_AGENT", "0").strip().lower() in (
         "1",

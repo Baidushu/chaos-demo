@@ -1,0 +1,5 @@
+{
+  "generated_at": 1700000000,
+  "current": { "protected_p95_ms": 100.0 },
+  "previous_medians": { "protected_p95_ms": null }
+}

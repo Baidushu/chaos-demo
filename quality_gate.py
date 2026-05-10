@@ -4,6 +4,7 @@ import sys
 import time
 from pathlib import Path
 
+
 class QualityGateError(Exception):
     """可由 `unified_quality_gate` 捕获；`main()` 仍会转为进程退出码 1。"""
 
@@ -15,6 +16,68 @@ def fail(msg: str):
 
 def severity_rank(level: str) -> int:
     return {"low": 1, "medium": 2, "high": 3}.get(level.lower(), 2)
+
+
+BENCHMARK_TREND_PATH = Path("reports/benchmark_trend_latest.json")
+
+
+def check_benchmark_trend_gate() -> str:
+    """读 `benchmark_trend_latest.json`：当前 protected P95 相对历史窗口**中位数**的比值不得超线（P3，默认关闭）。"""
+    enabled = os.getenv("UNIFIED_GATE_TREND_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+    if not enabled:
+        print("[QUALITY_GATE] benchmark_trend SKIPPED: set UNIFIED_GATE_TREND_ENABLED=1 to enable")
+        return "SKIPPED"
+
+    if not BENCHMARK_TREND_PATH.exists():
+        require = os.getenv("UNIFIED_GATE_TREND_REQUIRE_REPORT", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        if not require:
+            print("[QUALITY_GATE] benchmark_trend SKIPPED: report missing and not required")
+            return "SKIPPED"
+        fail(
+            "benchmark trend report missing: reports/benchmark_trend_latest.json "
+            "(run benchmark_compare.py first)"
+        )
+
+    with BENCHMARK_TREND_PATH.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if os.getenv("UNIFIED_GATE_TREND_CHECK_FRESHNESS", "0").strip().lower() in ("1", "true", "yes", "on"):
+        check_report_freshness(data, "benchmark_trend")
+
+    prev = (data.get("previous_medians") or {}).get("protected_p95_ms")
+    cur = (data.get("current") or {}).get("protected_p95_ms")
+    if prev is None or cur is None:
+        print("[QUALITY_GATE] benchmark_trend SKIPPED: no history median and/or current protected p95")
+        return "SKIPPED"
+    try:
+        prev_f = float(prev)
+        cur_f = float(cur)
+    except (TypeError, ValueError):
+        print("[QUALITY_GATE] benchmark_trend SKIPPED: non-numeric p95 in trend report")
+        return "SKIPPED"
+    if prev_f <= 0:
+        print("[QUALITY_GATE] benchmark_trend SKIPPED: history median p95 <= 0")
+        return "SKIPPED"
+
+    max_ratio = float(os.getenv("UNIFIED_GATE_TREND_PROTECTED_P95_RATIO_MAX", "1.15"))
+    ratio = cur_f / prev_f
+    if ratio > max_ratio:
+        fail(
+            "protected p95 vs history median ratio too high: "
+            f"{ratio:.3f} > {max_ratio:.3f} "
+            f"(current={cur_f:.1f}ms, history_median={prev_f:.1f}ms)"
+        )
+    print(
+        "[QUALITY_GATE] benchmark_trend PASS:"
+        f" ratio={ratio:.3f} (max={max_ratio:.3f})"
+        f" current={cur_f:.1f}ms history_median={prev_f:.1f}ms"
+    )
+    return "PASS"
 
 
 def run_check_with_retries(check_name: str, check_fn):

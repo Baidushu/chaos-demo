@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import pytest
 
@@ -89,3 +90,33 @@ def test_run_check_with_retries_fail_after_exhausted(monkeypatch):
 
     with pytest.raises(SystemExit):
         qg.run_check_with_retries("security", always_fail)
+
+
+_FIX = Path(__file__).resolve().parent / "fixtures"
+
+
+def test_check_benchmark_trend_gate_skipped_when_disabled(monkeypatch):
+    monkeypatch.delenv("UNIFIED_GATE_TREND_ENABLED", raising=False)
+    monkeypatch.setattr(qg, "BENCHMARK_TREND_PATH", _FIX / "nonexistent_trend.json")
+    assert qg.check_benchmark_trend_gate() == "SKIPPED"
+
+
+def test_check_benchmark_trend_gate_passes_when_ratio_ok(monkeypatch):
+    monkeypatch.setenv("UNIFIED_GATE_TREND_ENABLED", "1")
+    monkeypatch.setenv("UNIFIED_GATE_TREND_PROTECTED_P95_RATIO_MAX", "1.2")
+    monkeypatch.setattr(qg, "BENCHMARK_TREND_PATH", _FIX / "benchmark_trend_pass.json")
+    assert qg.check_benchmark_trend_gate() == "PASS"
+
+
+def test_check_benchmark_trend_gate_fails_when_ratio_high(monkeypatch):
+    monkeypatch.setenv("UNIFIED_GATE_TREND_ENABLED", "1")
+    monkeypatch.setenv("UNIFIED_GATE_TREND_PROTECTED_P95_RATIO_MAX", "1.1")
+    monkeypatch.setattr(qg, "BENCHMARK_TREND_PATH", _FIX / "benchmark_trend_fail.json")
+    with pytest.raises(qg.QualityGateError):
+        qg.check_benchmark_trend_gate()
+
+
+def test_check_benchmark_trend_gate_skipped_no_history(monkeypatch):
+    monkeypatch.setenv("UNIFIED_GATE_TREND_ENABLED", "1")
+    monkeypatch.setattr(qg, "BENCHMARK_TREND_PATH", _FIX / "benchmark_trend_no_history.json")
+    assert qg.check_benchmark_trend_gate() == "SKIPPED"
