@@ -38,6 +38,7 @@
 | **面试/答辩** 简历、讲稿、压测样例 | [`interview/INTERVIEW_PREP.md`](interview/INTERVIEW_PREP.md) |
 | **原理与题库**（长文） | [`intro/DEEP_DIVE.md`](intro/DEEP_DIVE.md) |
 | **Agent 诚实边界、理想路线图** | [`plan/AGENT_EVAL_PLAN.md`](plan/AGENT_EVAL_PLAN.md) §2 为主；脚本入口见 `agent-eval/README` |
+| **平台收敛路线图（Trace / 统一门禁）** | [`plan/PLATFORM_CONVERGENCE_ROADMAP.md`](plan/PLATFORM_CONVERGENCE_ROADMAP.md) |
 | **工程债/已解决** 表格 | [`plan/OPTIMIZATION_BACKLOG.md`](plan/OPTIMIZATION_BACKLOG.md) |
 | **个人练习** 空白模板 | [`personal/MY_LEARNING_LOG.md`](personal/MY_LEARNING_LOG.md) |
 | **可选 K8s** | [`k8s/CHAOS_LITE.md`](../k8s/CHAOS_LITE.md) |
@@ -62,6 +63,7 @@
 | `docs/intro/DEEP_DIVE.md` | 深挖与面试题库 |
 | `docs/interview/INTERVIEW_PREP.md` | 简历与样例 |
 | `docs/plan/AGENT_EVAL_PLAN.md` | Agent 规划与边界 |
+| `docs/plan/PLATFORM_CONVERGENCE_ROADMAP.md` | 平台收敛：Trace、统一门禁、路线图与状态表 |
 | `docs/plan/OPTIMIZATION_BACKLOG.md` | 优化待办/已解决 |
 | `docs/personal/MY_LEARNING_LOG.md` | 个人日志模板 |
 | `docs/TEST_STRATEGY.md` | 测试分层、覆盖模型、failure model、覆盖率方法论 |

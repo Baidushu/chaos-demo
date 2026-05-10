@@ -35,6 +35,7 @@
 | `chaos_compare.py` / agent-eval | §5 | P2 |
 | `tests/test_app.py` FakeRedis | §6 | P1～P2 |
 | 技术栈扩展（Playwright/k6 等） | §7 | P3 |
+| **平台收敛（Trace / Unified Gate）** | 见 [`PLATFORM_CONVERGENCE_ROADMAP.md`](PLATFORM_CONVERGENCE_ROADMAP.md) | P0～P1 |
 
 ---
 

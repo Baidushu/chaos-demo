@@ -479,10 +479,13 @@
 
 ## 13. 后续优化与演进方向（规划收纳，**尚未实现**者勿当已完成）
 
+**可执行计划表（阶段 / 交付物 / 状态）**：见 **[`plan/PLATFORM_CONVERGENCE_ROADMAP.md`](plan/PLATFORM_CONVERGENCE_ROADMAP.md)**（Trace → 统一门禁 → 语义回归等）；本节保留**条目式**补充，避免与路线图重复维护两套「阶段名」。
+
 以下与维护者/秋招学习路线对齐，**实现时需改代码并回写本文相关章节**。
 
 1. **质量门禁**  
    - 历史多份 `benchmark_*.json` 归档，做 **中位数/分位** 或与上版 **偏差** 再判失败，降低单次抖动误杀。  
+   - **统一门禁出口**（`final_decision` + `reasons[]`）见 **[`plan/PLATFORM_CONVERGENCE_ROADMAP.md`](plan/PLATFORM_CONVERGENCE_ROADMAP.md)** **P2**。  
    - 保持阈值**可配置、可解释**，避免为「过关」随意放宽。
 
 2. **混沌与亚健康**  
@@ -495,6 +498,7 @@
 
 4. **可观测**  
    - 可选 `trace_id` 贯穿日志与响应头；Grafana 增加 **2～3 个** 有因果关系的 panel（不必大而全）。  
+   - **平台向**：**Agent / tool 调用的 Run Trace**（`steps[]` 落盘）见 **[`plan/PLATFORM_CONVERGENCE_ROADMAP.md`](plan/PLATFORM_CONVERGENCE_ROADMAP.md)** **P1**。  
 
 5. **显式不采纳（默认）**  
    - 在 `quality_gate` 主链绑 **假 CPU 温度/假 PCIe** 当硬条件（易与真实质量混淆）；若做演示，用**独立 mock 报告**并标明模拟。  
