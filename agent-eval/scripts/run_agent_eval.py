@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = ROOT / "datasets" / "tool_eval.jsonl"
 REPORT_DIR = ROOT / "reports"
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
-RAW_RESULT_PATH = REPORT_DIR / "agent_raw_latest.json"
+DEFAULT_RAW_RESULT_PATH = REPORT_DIR / "agent_raw_latest.json"
 AGENT_MODE = os.getenv("AGENT_MODE", "rule")  # rule | ollama
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
@@ -66,13 +66,16 @@ def _ollama_llm_meta(raw: dict) -> dict:
 
 
 def plan_with_ollama(text: str):
+    suffix = os.getenv("AGENT_PROMPT_SUFFIX", "").strip()
     prompt = (
         "你是下单助手路由器。你只能输出一个JSON对象，不要输出其他内容。\n"
         "可用工具: place_order, query_order, cancel_order, ask_user\n"
         "如果信息不足或请求不合理，使用 ask_user。\n"
         "JSON格式: {\"tool\":\"...\",\"args\":{...}}\n"
-        f"用户输入: {text}"
     )
+    if suffix:
+        prompt += f"补充说明（必须遵守）: {suffix}\n"
+    prompt += f"用户输入: {text}"
     payload = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}).encode("utf-8")
     req = request.Request(OLLAMA_ENDPOINT, data=payload, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -314,6 +317,7 @@ def parse_args():
 def main():
     args = parse_args()
     random.seed(int(os.getenv("EVAL_SEED", "42")))
+    raw_path = Path(os.getenv("AGENT_EVAL_RAW_JSON", str(DEFAULT_RAW_RESULT_PATH)))
     base = os.getenv("TOOLS_BASE_URL", "http://127.0.0.1:5000")
     preflight_order_service(base)
     client = ToolsClient(
@@ -374,11 +378,15 @@ def main():
         "chaos_mode": args.chaos,
         "chaos_fail_rate": args.fail_rate,
         "chaos_latency_ms": args.latency_ms,
+        "agent_mode": AGENT_MODE,
+        "prompt_variant": os.getenv("AGENT_PROMPT_VARIANT", "default"),
+        "prompt_suffix_present": bool(os.getenv("AGENT_PROMPT_SUFFIX", "").strip()),
         "cases": results,
     }
-    with RAW_RESULT_PATH.open("w", encoding="utf-8") as f:
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    with raw_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"Saved raw result: {RAW_RESULT_PATH}")
+    print(f"Saved raw result: {raw_path}")
     if trace_enabled and trace_doc is not None:
         tpath = default_trace_path(REPORT_DIR)
         write_trace_document(trace_doc, tpath)

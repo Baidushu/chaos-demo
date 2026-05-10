@@ -58,6 +58,34 @@ def load_gate_thresholds():
         return dict(defaults)
 
 
+def load_prompt_regression_thresholds():
+    """Prompt A/B：candidate 相对 baseline 允许的工具/参数回落与重试、无效率上升。"""
+    defaults = {
+        "max_tool_selection_accuracy_drop": 0.0,
+        "max_arg_accuracy_drop": 0.05,
+        "max_retry_rate_surge": 0.15,
+        "max_planner_invalid_rate_surge": 0.10,
+    }
+    try:
+        cfg = parse_simple_yaml(CFG_PATH)
+        pr = cfg.get("prompt_regression", {})
+        if not isinstance(pr, dict):
+            pr = {}
+        out = {}
+        for k, default in defaults.items():
+            raw = pr.get(k)
+            if raw is None:
+                out[k] = default
+            else:
+                try:
+                    out[k] = float(raw)
+                except (TypeError, ValueError):
+                    out[k] = default
+        return out
+    except Exception:
+        return dict(defaults)
+
+
 def load_judge_sampling_config():
     """是否启用本地 Judge、以及对 attack 样例的抽检比例（与 score_agent_eval 共用）。"""
     cfg = parse_simple_yaml(CFG_PATH)

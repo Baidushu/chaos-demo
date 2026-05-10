@@ -20,3 +20,8 @@ gate:
   hallucination_rate_max: 0.10
   #计划器无效率
   planner_invalid_rate_max: 0.15
+prompt_regression:
+  max_tool_selection_accuracy_drop: 0.0
+  max_arg_accuracy_drop: 0.05
+  max_retry_rate_surge: 0.15
+  max_planner_invalid_rate_surge: 0.10

@@ -416,7 +416,8 @@
 
 - **目的（工程）**：用 `datasets/tool_eval.jsonl` 等驱动**规划器**产生工具调用计划，**真实 HTTP** 调订单服务（或离线兜底），输出正确率、重试、token 启发式等，并与 **`config/eval_config.yaml` 的 `gate:`** 比较；`chaos_compare` 提供 **无故障 vs 混故障** 轮次对照（**`--strict`** 用于 CI）。  
 - **不是什么**：不是大模型产品化、不是完整 Agent 平台；**小数据集**、**`AGENT_MODE=rule`** 为 CI 默认；**`ollama` 模式**环境差异大。  
-- **主脚本**（`agent-eval/scripts/`）：`run_agent_eval.py`、`score_agent_eval.py`、`gate_agent_eval.py`、`chaos_compare.py`（CI 常见）、`eval_variance.py`、`judge_local.py`。  
+- **主脚本**（`agent-eval/scripts/`）：`run_agent_eval.py`、`score_agent_eval.py`、`gate_agent_eval.py`、`chaos_compare.py`（CI 常见）、**`prompt_regression.py`（P4：Prompt A/B 两遍跑分 + 对比门禁）**、`eval_variance.py`、`judge_local.py`。  
+- **P4（Prompt / 规划器 A/B）**：`python agent-eval/scripts/prompt_regression.py` 依次跑 **baseline / candidate**（可通过 **`--baseline-suffix` / `--candidate-suffix`** 写入 **`AGENT_PROMPT_SUFFIX`**，在 **`AGENT_MODE=ollama`** 下附加到路由规划提示；规则模式两遍通常相同，用于验证流水线）。产物 **`agent-eval/reports/prompt_regression_latest.json`**、**`.md`**；阈值来自 **`eval_config.yaml`** 的 **`prompt_regression:`**。单次评测可通过 **`AGENT_EVAL_RAW_JSON`**、**`AGENT_EVAL_SCORE_JSON`**、**`AGENT_EVAL_SCORE_MD`**、**`AGENT_EVAL_REVIEW_POOL_JSON`** 指定路径，避免互相覆盖。Judge 仍由 **`AGENT_EVAL_SKIP_JUDGE`** 等与 `score_agent_eval` 一致。  
 - **与订单服务关系**：`TOOLS_BASE_URL` 指向已起的 `5000`；`SKIP_TOOLS_HEALTH_CHECK`、`TOOLS_HTTP_TIMEOUT_SEC` 等见脚本与根 `run.ps1`。  
 - **局限**：客户端 chaos **不等价**于杀容器；token 指标**非**账单级。详见 [`agent-eval/README.md`](../agent-eval/README.md)（该 README 与本文 **§8** 口径一致）。
 
@@ -428,7 +429,7 @@
 - **`@pytest.mark.smoke`**：少量快路径。  
 - **`@pytest.mark.contract`**：整个 `test_api_contract.py` 为契约/形状类用例。  
 - **`@pytest.mark.integration`**：需本机 Redis 等（可能 skip），见 `pytest.ini`。  
-- **文件速查**：`test_app.py`（主功能/韧性）、`test_fault_injection.py`（`/fault/*` 与 **`apply_faults`**）、`test_llm_client.py`（`LLMClient` 解析/后端选择，多 mock）、`test_api_contract.py`、`test_benchmark_compare.py`、`test_quality_gate.py`、`test_security_scan.py`、`test_replay_traffic.py`、`test_agent_eval_config.py`、`test_perf_regression.py`、`test_redis_integration.py`。  
+- **文件速查**：`test_app.py`（主功能/韧性）、`test_fault_injection.py`（`/fault/*` 与 **`apply_faults`**）、`test_llm_client.py`（`LLMClient` 解析/后端选择，多 mock）、`test_api_contract.py`、`test_benchmark_compare.py`、`test_quality_gate.py`、`test_security_scan.py`、`test_replay_traffic.py`、`test_agent_eval_config.py`、**`test_prompt_regression.py`（P4 对比逻辑）**、`test_perf_regression.py`、`test_redis_integration.py`。  
 - **`api-automation-demo/tests/`**：**另一棵** pytest 树（YAML + httpx + Allure），**不属于**本节「根 `tests/`」集合；细节 **§2.1 L**。  
 
 **不要在未起 Docker 时假设集成环境一定绿**；单测用 Fake Redis，不依赖真 Redis 容器即可跑大部分用例（以实际 import 与 fixture 为准）。
@@ -475,9 +476,8 @@
 | `reports/unified_quality_gate_latest.json` | **`unified_quality_gate.py`**（`final_decision`、`reasons[]`、分项 `checks`） |
 | `agent-eval/reports/*` | 各 `agent-eval/scripts` 脚本 |
 | `agent-eval/reports/agent_eval_trace_latest.json` | **`run_agent_eval.py`** 的 **HTTP 工具调用 trace**（每轮一步 `steps[]`：tool / latency_ms / http_status / retry_index 等）；路径可用环境变量 **`AGENT_TRACE_FILE`** 覆盖；**`AGENT_TRACE_ENABLED=0`** 可关闭落盘。 |
-| `agent-eval/reports/agent_trace_baseline.json`、`agent_trace_chaos.json` | **`chaos_compare.py`** 分别为无混沌与 mixed 两轮子进程设置的 trace 输出，避免互相覆盖；对比报告正文会列路径。 |
-
----
+| `agent-eval/reports/prompt_regression_latest.json`、`.md` | **`prompt_regression.py`**（baseline vs candidate 指标 delta + **`gate_pass` / `gate_reasons`**） |
+| `agent-eval/reports/agent_raw_prompt_*.json`、`agent_eval_prompt_*.json` | **`prompt_regression.py`** 子轮次输出（与默认 **`agent_raw_latest.json`** 区分） |
 
 ## 12. 诚实边界（避免 AI 过读、瞎改）
 

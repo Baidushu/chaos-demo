@@ -10,10 +10,10 @@ from judge_local import load_judge_sampling_config, local_llm_judge
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW_RESULT_PATH = ROOT / "reports" / "agent_raw_latest.json"
-SCORE_RESULT_PATH = ROOT / "reports" / "agent_eval_latest.json"
-SCORE_MD_PATH = ROOT / "reports" / "agent_eval_latest.md"
-REVIEW_POOL_PATH = ROOT / "reports" / "manual_review_pool.jsonl"
+RAW_DEFAULT = ROOT / "reports" / "agent_raw_latest.json"
+SCORE_DEFAULT = ROOT / "reports" / "agent_eval_latest.json"
+MD_DEFAULT = ROOT / "reports" / "agent_eval_latest.md"
+REVIEW_DEFAULT = ROOT / "reports" / "manual_review_pool.jsonl"
 
 
 def tool_match(expected_tools, called_tools):
@@ -54,8 +54,13 @@ def arg_match(expected_args, called_args):
 def main():
     random.seed(int(os.getenv("EVAL_SEED", "42")))
     judge_enabled, judge_sample_rate = load_judge_sampling_config()
+    raw_path = Path(os.getenv("AGENT_EVAL_RAW_JSON", str(RAW_DEFAULT)))
+    score_path = Path(os.getenv("AGENT_EVAL_SCORE_JSON", str(SCORE_DEFAULT)))
+    md_env = os.getenv("AGENT_EVAL_SCORE_MD")
+    md_path = Path(md_env) if md_env else score_path.with_suffix(".md")
+    review_path = Path(os.getenv("AGENT_EVAL_REVIEW_POOL_JSON", str(REVIEW_DEFAULT)))
 
-    with RAW_RESULT_PATH.open("r", encoding="utf-8") as f:
+    with raw_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
     cases = data.get("cases", [])
@@ -211,7 +216,7 @@ def main():
         "judge_sample_rate": judge_sample_rate,
     }
 
-    with SCORE_RESULT_PATH.open("w", encoding="utf-8") as f:
+    with score_path.open("w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
     seen = set()
@@ -221,7 +226,8 @@ def main():
         if key not in seen:
             seen.add(key)
             deduped.append(item)
-    with REVIEW_POOL_PATH.open("w", encoding="utf-8") as f:
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    with review_path.open("w", encoding="utf-8") as f:
         for item in deduped:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
@@ -272,12 +278,12 @@ def main():
         f"- judge_pass_rate: {judge_pass_rate_text}",
         f"- manual_review_pool_size: {len(deduped)}",
     ]
-    with SCORE_MD_PATH.open("w", encoding="utf-8") as f:
+    with md_path.open("w", encoding="utf-8") as f:
         f.write("\n".join(md))
 
-    print(f"Saved score json: {SCORE_RESULT_PATH}")
-    print(f"Saved score md: {SCORE_MD_PATH}")
-    print(f"Saved review pool: {REVIEW_POOL_PATH}")
+    print(f"Saved score json: {score_path}")
+    print(f"Saved score md: {md_path}")
+    print(f"Saved review pool: {review_path}")
 
 
 if __name__ == "__main__":
