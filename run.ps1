@@ -4,6 +4,12 @@ param(
     [string]$Task
 )
 
+# 本地 LLM（可选）：将 local_llm_env.example.ps1 复制为 local_llm_env.ps1 并填入 Key；见示例文件说明
+$llmLocal = Join-Path $PSScriptRoot "local_llm_env.ps1"
+if (Test-Path $llmLocal) {
+    . $llmLocal
+}
+
 # 压测后等服务就绪再扫：循环请求 /healthz，与 CI「wait for app」同类（重试 + 上限次数）
 function Wait-AppHealthz {
     param(
@@ -80,7 +86,7 @@ switch ($Task) {
   agenteval     Agent：run + score + gate（起服务后执行；未设时注入与 CI 一致的 TOOLS/AGENT_*）
   agentchaos    chaos_compare（无故障 vs 混合故障对照；--strict 请见 CI 或手输）
   agentvariance eval_variance（3 轮 mixed，看波动）
-  llmassist     打印 llm_assist.py --help（可选 LLM 测开辅助，不进 CI）
+  llmassist     打印 llm_assist.py --help（可选 LLM 测开辅助；若存在 local_llm_env.ps1 会先加载）
 "@
     }
     "up" {

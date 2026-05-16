@@ -24,4 +24,5 @@ Thumbs.db
 # Cursor / Claude 本地配置
 .claude/
 
-# 可保留根 README；其他临时笔记若需忽略可逐条添加
+# 本地 LLM 密钥（复制 local_llm_env.example.ps1 为 local_llm_env.ps1；勿提交）
+local_llm_env.ps1

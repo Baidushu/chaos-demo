@@ -134,6 +134,8 @@ python fault_demo.py
 
 ## LLM 辅助（可选）
 
+**长期本机配置（不必每次手敲 Key）**：复制 **`local_llm_env.example.ps1`** 为 **`local_llm_env.ps1`**，在后者里填写 **`LLM_API_KEY`**（该文件已 **`.gitignore`**，勿提交）。之后运行 **`.\run.ps1 -Task ...`** 会自动加载；若直接运行 **`python llm_assist.py`**，请先在同一终端执行 **`. .\local_llm_env.ps1`**。若 Key 曾在聊天/PR 中泄露，请在云控制台**作废并轮换**。
+
 `llm_client.py` / `llm_assist.py` 仅依赖 **标准库 + 环境变量**（见 `llm_client.py` 模块说明）；云端需配置 **`LLM_API_KEY`** 等，本地可 **`LLM_BACKEND=ollama`**。**不进 CI 主链**，产出默认在 **`reports/llm_*`**（与 `reports/` 一同被 `.gitignore` 忽略，需自留备份）。
 
 常用子命令（均需先能连上模型）：
