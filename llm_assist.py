@@ -1,7 +1,7 @@
 """LLM 辅助测试工具 — 测开向「AI 素养」能力：生成用例、分析报告/日志、补全 case、读代码、契约审计。
 
 子命令：
-- generate-tests: 从内置 API 描述生成 pytest 草稿（需人审 + pytest）
+- generate-tests: 从内置 API 描述生成 pytest 草稿（需人审 + pytest；依赖仓库 conftest 提供的 `client` 夹具）
 - analyze-report: 分析 benchmark / security 等 JSON 报告
 - analyze-logs: 抽样 JSON 行日志，归纳异常与可观测性建议（勿把含密钥的原始日志上传公网模型）
 - complete-cases: 按 jsonl（agent-eval tool_eval）或 yaml（api-automation）风格**建议**新用例草稿
@@ -19,7 +19,7 @@
 
 环境变量见 llm_client.py（LLM_BACKEND / LLM_API_KEY / Ollama 等）。
 
-**注意**：所有 LLM 输出均为草稿，须经过人工审查、单测与门禁；CI 主链默认不依赖本脚本。
+**注意**：所有 LLM 输出均为草稿，须经过人工审查、单测与门禁；CI 主链默认不依赖本脚本。根目录 `conftest.py` 会加载 `tests.conftest`，因此 `--output` 写到 `reports/` 等目录时同样能解析 `client`。
 """
 from __future__ import annotations
 
@@ -320,7 +320,11 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     gen = sub.add_parser("generate-tests", help="Generate pytest draft from embedded API spec")
-    gen.add_argument("--output", default="tests/test_llm_generated.py", help="Output file path")
+    gen.add_argument(
+        "--output",
+        default="tests/test_llm_generated.py",
+        help="Output path (.py). 默认在 tests/；写到 reports/ 亦可（根 conftest 会挂载 tests 里的 client 夹具）",
+    )
 
     ana = sub.add_parser("analyze-report", help="Analyze benchmark/security JSON report")
     ana.add_argument("--report", required=True, help="Report JSON path")

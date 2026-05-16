@@ -11,3 +11,5 @@ $env:LLM_BACKEND = "openai"
 $env:LLM_API_KEY = "sk-请替换"
 # 可选：轻量模型（以控制台实际可用名为准）
 # $env:LLM_MODEL = "qwen-turbo"
+# 可选：网络慢或长 prompt（如 contract-audit）时加大（秒），默认脚本内为 120
+# $env:LLM_TIMEOUT_SEC = "180"

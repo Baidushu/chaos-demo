@@ -11,12 +11,13 @@
     LLM_API_KEY: 云端 API Key（openai 后端必填）
     LLM_BASE_URL: 云端 API 地址（默认 https://dashscope.aliyuncs.com/compatible-mode/v1）
     LLM_MODEL: 模型名（ollama 默认 qwen2.5:7b，openai 默认 qwen-plus）
-    LLM_TIMEOUT_SEC: 请求超时（默认 30）
+    LLM_TIMEOUT_SEC: 请求超时秒数（默认 120；`contract-audit` 等长 prompt 或网络慢时可设 180～300）
 """
 from __future__ import annotations
 
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 
@@ -32,7 +33,7 @@ class LLMClient:
         model: str | None = None,
         timeout_sec: int | None = None,
     ):
-        self._timeout = timeout_sec or int(os.getenv("LLM_TIMEOUT_SEC", "30"))
+        self._timeout = timeout_sec or int(os.getenv("LLM_TIMEOUT_SEC", "120"))
         self._backend = backend or os.getenv("LLM_BACKEND", "auto")
         self._api_key = api_key or os.getenv("LLM_API_KEY", "")
         self._base_url = base_url or os.getenv("LLM_BASE_URL", "")
@@ -121,9 +122,16 @@ class LLMClient:
         req = urllib.request.Request(url, data=payload, method="POST")
         req.add_header("Content-Type", "application/json")
 
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data.get("message", {}).get("content", "")
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("message", {}).get("content", "")
+        except (TimeoutError, socket.timeout) as e:
+            raise RuntimeError(
+                f"LLM 请求在 {self._timeout}s 内未完成（读超时）。"
+                "可加大环境变量 LLM_TIMEOUT_SEC（如 180）；"
+                "并检查本机能否访问 Ollama（LLM_BASE_URL）。"
+            ) from e
 
     def _chat_openai(self, prompt: str, system: str, max_tokens: int) -> str:
         messages = []
@@ -146,6 +154,13 @@ class LLMClient:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data["choices"][0]["message"]["content"]
+        except (TimeoutError, socket.timeout) as e:
+            raise RuntimeError(
+                f"LLM 请求在 {self._timeout}s 内未完成（读超时）。"
+                "可加大环境变量 LLM_TIMEOUT_SEC（如 180）；"
+                "或换较快模型 LLM_MODEL=qwen-turbo；"
+                "并检查本机网络/代理能否访问 LLM_BASE_URL。"
+            ) from e
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="ignore")
             raise RuntimeError(f"LLM API error {e.code}: {body}") from e
