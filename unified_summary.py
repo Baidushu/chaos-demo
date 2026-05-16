@@ -1,6 +1,7 @@
 """
 统一平台报告（单页入口）：聚合 gate / benchmark / trend / agent-eval / chaos / prompt / trace 产物路径与关键信号，
 写出 `reports/unified_summary_latest.json` 与 `.md`。不改变既有子报告格式，仅只读汇总。
+`artifacts[]` 含可选 **`reports/llm_*`**（`llm_assist.py` 产出，category **`llm`**）。
 
 环境变量（可选）：
   UNIFIED_SUMMARY_P95_REGRESSION_WARN — protected/baseline P95 比值超过该值写入 signals（默认 1.10）
@@ -34,6 +35,12 @@ PATHS: dict[str, Path] = {
     "trace_timeline_mmd": ROOT / "reports" / "trace_timeline_latest.mmd",
     "trace_timeline_html": ROOT / "reports" / "trace_timeline_latest.html",
     "trace_timeline_meta": ROOT / "reports" / "trace_timeline_meta.json",
+    "llm_analysis_md": ROOT / "reports" / "llm_analysis_latest.md",
+    "llm_log_analysis_md": ROOT / "reports" / "llm_log_analysis_latest.md",
+    "llm_tool_eval_suggest": ROOT / "reports" / "llm_tool_eval_suggested.jsonl",
+    "llm_api_cases_suggest": ROOT / "reports" / "llm_api_cases_suggested.yaml",
+    "llm_code_explain_md": ROOT / "reports" / "llm_code_explain_latest.md",
+    "llm_contract_audit_md": ROOT / "reports" / "llm_contract_audit_latest.md",
 }
 
 
@@ -90,6 +97,8 @@ def _category(key: str) -> str:
         return "eval"
     if key.startswith("trace"):
         return "trace"
+    if key.startswith("llm_"):
+        return "llm"
     return "other"
 
 
@@ -442,6 +451,18 @@ def _write_markdown(doc: dict) -> str:
             lines.append(f"- {x}")
     else:
         lines.append("- (no strong trend signal in this run)")
+
+    llm_rows = [a for a in doc["artifacts"] if a["category"] == "llm"]
+    llm_present = [a for a in llm_rows if a["present"]]
+    lines.extend(["", "## LLM 辅助草稿（可选）", ""])
+    if llm_present:
+        lines.append("本地运行 **`llm_assist.py`** 后的产物（**非** CI 必需；须人审后再采信）：")
+        for a in llm_present:
+            lines.append(f"- `{a['path']}`（`{a['id']}`）")
+    else:
+        lines.append(
+            "- （当前无 `reports/llm_*`：**`python llm_assist.py --help`**；需 Ollama 或 **`LLM_API_KEY`**）"
+        )
 
     lines.extend(["", "## Artifacts", "", "| id | category | present | path |", "|---|----|----|---|"])
     for a in doc["artifacts"]:

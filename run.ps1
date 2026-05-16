@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("help", "up", "down", "test", "bench", "gate", "unified", "scan", "replay", "faultdemo", "qa", "qafull", "agenteval", "agentchaos", "agentvariance")]
+    [ValidateSet("help", "up", "down", "test", "bench", "gate", "unified", "scan", "replay", "faultdemo", "qa", "qafull", "agenteval", "agentchaos", "agentvariance", "llmassist")]
     [string]$Task
 )
 
@@ -80,6 +80,7 @@ switch ($Task) {
   agenteval     Agent：run + score + gate（起服务后执行；未设时注入与 CI 一致的 TOOLS/AGENT_*）
   agentchaos    chaos_compare（无故障 vs 混合故障对照；--strict 请见 CI 或手输）
   agentvariance eval_variance（3 轮 mixed，看波动）
+  llmassist     打印 llm_assist.py --help（可选 LLM 测开辅助，不进 CI）
 "@
     }
     "up" {
@@ -157,5 +158,8 @@ switch ($Task) {
         Set-DefaultAgentEvalEnv
         Wait-AppHealthz
         python agent-eval/scripts/eval_variance.py --runs 3 --chaos mixed --fail-rate 0.45 --latency-ms 180
+    }
+    "llmassist" {
+        python llm_assist.py --help
     }
 }

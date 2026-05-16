@@ -69,6 +69,7 @@ def test_release_markdown_sections(monkeypatch):
     assert "# Release Summary" in md
     assert "## Checks" in md and "## Key regressions" in md
     assert "## Trace highlights" in md and "## Trend" in md
+    assert "## LLM 辅助草稿" in md
     assert "**semantic_eval**:" in md
     assert "checks_summary" in doc
 

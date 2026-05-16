@@ -284,6 +284,7 @@
 | `bench` / `scan` / `gate` / **`unified`** | 压测 / 安全扫描 / 仅主链 **`quality_gate`** / **P2 汇总门禁** |
 | `qa` | pip + 全量 pytest + bench + 循环等 healthz + scan + gate |
 | **`qafull`** | 同 `qa` 但去掉单独 `quality_gate`，在 **`chaos_compare --strict`** → **`trace_timeline.py`** → **`unified_quality_gate.py`** → **`unified_summary.py`**（与 CI 主链一致） |
+| **`llmassist`** | **`python llm_assist.py --help`**（可选 LLM 测开子命令；**不进 CI**） |
 | `agenteval` | 依次跑 `run_agent_eval` → `score` → `gate` |
 | `agentchaos` | 仅 `chaos_compare.py` |
 | `replay` | 默认读 `reports/traffic_record_latest.jsonl` 回放 |
@@ -485,6 +486,7 @@
 | `reports/unified_summary_latest.json`、`.md` | **`unified_summary.py`**（平台一页汇总；**`artifacts[]`** 指向 benchmark / trend / gate / eval / trace / prompt 等） |
 | `reports/trace_timeline_latest.mmd`、`.html` | **`trace_timeline.py`**（无 `--input` 且存在 baseline/chaos 两份 trace 时为 **HTML 上下双 Mermaid**；`.mmd` 内两段图以 `%% ===` 分隔） |
 | `reports/trace_timeline_meta.json` | **`trace_timeline.py`** 写出（`source`、输出相对路径等） |
+| `reports/llm_*.md`、`.jsonl`、`.yaml`（可选） | **`llm_assist.py`**；**`unified_summary`** 的 **`artifacts[]`（category `llm`）** 与 Release Summary **「LLM 辅助草稿」** 节会标明是否落盘 |
 | `agent-eval/reports/*` | 各 `agent-eval/scripts` 脚本 |
 | `agent-eval/reports/agent_eval_trace_latest.json` | **`run_agent_eval.py`** 的 **HTTP 工具调用 trace**（每轮一步 `steps[]`：tool / latency_ms / http_status / retry_index 等）；路径可用环境变量 **`AGENT_TRACE_FILE`** 覆盖；**`AGENT_TRACE_ENABLED=0`** 可关闭落盘。 |
 | `agent-eval/reports/agent_trace_baseline.json`、`agent_trace_chaos.json` | **`chaos_compare.py`** 两轮各写一份聚合 trace（**`chaos_compare_latest.json`** 内 **`agent_trace_files`**） |

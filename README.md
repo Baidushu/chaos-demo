@@ -84,7 +84,8 @@ docker compose down
 | `gate` | `quality_gate.py`（仅 benchmark+security，需先有报告） |
 | `unified` | `unified_quality_gate.py`（汇总 + agent_eval；与 CI 末步一致，需先有 **chaos_compare** 或等价产物） |
 | `qa` | test → bench → 等待 healthz → scan → gate |
-| **`qafull`** | 同 `qa`，再 `chaos_compare --strict`（对齐 CI 末尾 Agent 步） |
+| **`qafull`** | 同 `qa`，再 `chaos_compare --strict`、`trace_timeline`、`unified`、平台摘要（对齐 CI） |
+| **`llmassist`** | **`python llm_assist.py --help`**（可选 LLM 测开子命令；不需起 Docker） |
 
 **注意：** `bench` / `scan` / `qa` / `qafull` / `agenteval` 等依赖**已在运行的 API**（默认 `127.0.0.1:5000`）。请先执行 `.\run.ps1 -Task up` 或自行 `docker compose up -d`，再跑 `qa` 等任务。
 
