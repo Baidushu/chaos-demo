@@ -76,8 +76,8 @@
 | **订单与部署** | 订单在 **Redis** `order:{id}`，**`ORDER_TTL_SEC`**（compose/k8s/默认一致）；**`Dockerfile` `gunicorn --workers 2`**。 |
 | **agent-eval** | **辅线**：见 **§8**；CI 用 `rule` + `AGENT_EVAL_SKIP_JUDGE` 等**能跑、能门禁**；**`chaos_compare`** 子进程设 **`CHAOS_SUBPROC_TIMEOUT_SEC`（默认 1200s）** 防挂起。**叙事上**强调「工具调用稳定性评估」，**不要**把本仓讲成 AI 主项目。 |
 | **HTTP 故障注入** | **可编程故障注入**：`/fault/*` **HTTP 动态**注册 **`latency` / `exception` / `drop` / `slow_db`**，Redis **`fault:{type}` + TTL 自动恢复**；`http_api` 在**业务请求入口**调用 **`apply_faults`**（探活/指标/`/fault` 自身不套娃）；关 **`ENABLE_FAULT_INJECTION`** 则跳过。 |
-| **可选 LLM 辅助** | 根目录 **`llm_client.py`**（Ollama / OpenAI 兼容端点，标准库 HTTP）、**`llm_assist.py`**（CLI：`generate-tests`、`analyze-report`）；**不进 CI 主链**，无额外 pip 依赖。 |
-| **接口自动化样例** | **`api-automation-demo/`**：**独立** pytest 工程（**httpx**、**YAML** 参数化、**Allure**、重试与日志封装）；**`.github/workflows/api-automation-demo.yml`**；默认 CI **MockTransport**，设 **`API_AUTOMATION_BASE_URL`** 可对已起的 **5000** 联调。见 **§2.1 L**。 |
+| **可选 LLM 辅助** | 根目录 **`llm_client.py`**（Ollama / OpenAI 兼容端点）、**`llm_assist.py`**（CLI：测试草稿、`analyze-report`、`analyze-logs`、`complete-cases`、`explain-code`、`contract-audit`）；**不进 CI 主链**，无额外 pip 依赖。 |
+| **接口自动化样例** | **`api-automation-demo/`**：**独立** pytest 工程（**httpx**、**YAML** 参数化、**Allure**、重试与日志封装）；在子目录本地 **`pytest`**（可选 **`--alluredir`**）；不设 **`API_AUTOMATION_BASE_URL`** 时常为 **MockTransport**，设后可对已起的 **5000** 联调。见 **§2.1 L**。 |
 
 ---
 
@@ -98,7 +98,7 @@
 | `replay_traffic.py` | 从 JSONL 流式读请求并重放，写 `reports/traffic_replay_*.json/.md` |
 | `fault_demo.py` | 需**已运行**的 API：编排注入延迟/丢包/清除，写 **`reports/fault_demo_latest.json`**（演示用） |
 | `llm_client.py` | 可选 LLM 客户端（**`LLM_BACKEND`** 等，见 §6） |
-| `llm_assist.py` | 可选 CLI：从 API 描述生成测试草稿、分析 benchmark/security 报告（依赖 `llm_client`） |
+| `llm_assist.py` | 可选 CLI：**`generate-tests`**、**`analyze-report`**、**`analyze-logs`**（抽样日志）、**`complete-cases`**（jsonl/yaml 草稿）、**`explain-code`**、**`contract-audit`**（均须人审；见模块 docstring） |
 | `run.ps1` | Windows 下一键：compose、pytest、bench、scan、gate、qa、agent 相关等 |
 | `pytest.ini` | 注册标记 `smoke`、`contract` 等（见 `pytest.ini` 正文） |
 | `sample-data/` | 示例 JSONL 等，供回放/学习 |
@@ -108,10 +108,9 @@
 | `grafana/provisioning/`、`grafana/dashboards/` | 数据源与大盘 |
 | `tests/` | 全部单测，见 §9 |
 | `agent-eval/` | **扩展**：工具调用稳定性评估脚本与数据集，见 **§8**（**非**质量工程主线） |
-| `api-automation-demo/` | **独立**：pytest + httpx + **YAML** 数据驱动 + **Allure** + 专用 workflow；证明接口自动化范式，**不与** `app.py` 同进程 |
+| `api-automation-demo/` | **独立**：pytest + httpx + **YAML** 数据驱动 + **Allure**；在子目录本地运行，证明接口自动化范式，**不与** `app.py` 同进程 |
 | `k8s/` | 可选 K8s 清单、`CHAOS_LITE.md`、Chaos 脚本，**不跑 CI 默认流程** |
 | `.github/workflows/qa.yml` | CI 流水线，见 §7 |
-| `.github/workflows/api-automation-demo.yml` | 子项目 **api-automation-demo** 独立 pytest + Allure artifact |
 | `reports/` | 运行产物（benchmark、**benchmark_history**、**benchmark_trend**、security、replay、流量录制等） |
 
 ---
@@ -244,7 +243,7 @@
 |------|----------|
 | HTTP | 标准库 **`urllib.request`**；**Ollama** 走 `/api/chat`，**OpenAI 兼容**走 `/chat/completions`。 |
 | `LLMClient` | **`LLM_BACKEND`**：`auto`（先探 Ollama `/api/tags`，再需 **`LLM_API_KEY`**）、`ollama`、`openai`；**`OLLAMA_ENDPOINT`**、**`LLM_BASE_URL`**、**`LLM_MODEL`**、**`LLM_TIMEOUT_SEC`** 等见 §6。 |
-| `llm_assist.py` | **`argparse`** 子命令：**`generate-tests`**、**`analyze-report --report <path>`**；提示词内嵌 API 说明（含 **`/fault/*`** 摘要）。 |
+| `llm_assist.py` | **`argparse`** 子命令：**`generate-tests`**、**`analyze-report --report <path>`**、**`analyze-logs --input <jsonl>`**、**`complete-cases --format jsonl|yaml`**、**`explain-code --path <py>`**、**`contract-audit`**；提示词内嵌 API 说明（含 **`/fault/*`**）。产出默认在 **`reports/llm_*`**，**不**代替 pytest/门禁。 |
 
 ### L. `api-automation-demo/`（独立接口自动化样例）
 
@@ -408,7 +407,7 @@
 11. `python unified_summary.py`：写 **`reports/unified_summary_latest.json`** 与 **`.md`**（Gate 失败时仍执行，便于留档）  
 12. 上传 `reports/` 与 `agent-eval/reports/` 部分产物为 artifact（含 **`unified_quality_gate_latest.json`**、**`unified_summary_latest.*`**、**`trace_timeline_latest.*`**；上传步常用 **`if: always()`** 以便失败时仍能取报告）  
 
-**并行工作流**：**`api-automation-demo.yml`** 在子目录安装独立依赖并跑 **pytest + Allure**，不上主链 Docker；**接口自动化**展示用，**不参与**上述发布决策主链。
+**`api-automation-demo/`**：可在子目录**本地**安装依赖并跑 **pytest + Allure**（**不参与**主链 Docker/decision）；Allure 原始目录建议保持 **`.gitignore`**，不上库。
 
 **本地 `run.ps1 -Task qa`**：含 pip、**全量** pytest、bench、**Wait-AppHealthz**、scan、gate；**不**一定包含与 CI 完全相同的 smoke 分步，以脚本为准。
 
@@ -433,7 +432,7 @@
 - **`@pytest.mark.smoke`**：少量快路径。  
 - **`@pytest.mark.contract`**：整个 `test_api_contract.py` 为契约/形状类用例。  
 - **`@pytest.mark.integration`**：需本机 Redis 等（可能 skip），见 `pytest.ini`。  
-- **文件速查**：`test_app.py`（主功能/韧性）、`test_fault_injection.py`（`/fault/*` 与 **`apply_faults`**）、`test_llm_client.py`（`LLMClient` 解析/后端选择，多 mock）、`test_api_contract.py`、`test_benchmark_compare.py`、`test_quality_gate.py`、`test_security_scan.py`、`test_replay_traffic.py`、`test_agent_eval_config.py`、**`test_prompt_regression.py`（P4 对比逻辑）**、**`test_unified_summary.py`（平台摘要）**、**`test_trace_timeline.py`（P6 Mermaid）**、`test_perf_regression.py`、`test_redis_integration.py`。  
+- **文件速查**：`test_app.py`（主功能/韧性）、`test_fault_injection.py`（`/fault/*` 与 **`apply_faults`**）、`test_llm_client.py`（`LLMClient` 解析/后端选择，多 mock）、**`test_llm_assist_helpers.py`（`llm_assist` 采样/报告类型等纯函数）**、`test_api_contract.py`、`test_benchmark_compare.py`、`test_quality_gate.py`、`test_security_scan.py`、`test_replay_traffic.py`、`test_agent_eval_config.py`、**`test_prompt_regression.py`（P4 对比逻辑）**、**`test_unified_summary.py`（平台摘要）**、**`test_trace_timeline.py`（P6 Mermaid）**、`test_perf_regression.py`、`test_redis_integration.py`。
 - **`api-automation-demo/tests/`**：**另一棵** pytest 树（YAML + httpx + Allure），**不属于**本节「根 `tests/`」集合；细节 **§2.1 L**。  
 
 **不要在未起 Docker 时假设集成环境一定绿**；单测用 Fake Redis，不依赖真 Redis 容器即可跑大部分用例（以实际 import 与 fixture 为准）。

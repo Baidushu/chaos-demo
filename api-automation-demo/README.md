@@ -10,8 +10,8 @@
 | **数据驱动** | `data/api_cases.yaml` → `pytest_generate_tests` 参数化 |
 | **重试** | `lib/retry.py`；用例级 `retry: true`；示例 `flaky_ok_mock` 前两次 503 |
 | **日志** | `lib/logging_config.py` + `LoggingHttpClient` 打印 method/path/status/耗时 |
-| **Allure** | `@allure.epic/feature` + `--alluredir` 生成结果目录 |
-| **CI** | 见仓库根 `.github/workflows/api-automation-demo.yml` |
+| **Allure** | `@allure.epic/feature` + `--alluredir` 生成结果目录（**`allure-results/`** 已在仓库 `.gitignore`，勿提交） |
+| **CI** | **本地/自建流水线**运行子目录 `pytest`；当前仓库默认主 CI 仅为 **`qa.yml`**，本样例不绑定发布决策主链 |
 
 ## 本地运行
 

@@ -133,12 +133,27 @@ python fault_demo.py
 
 ## LLM 辅助（可选）
 
-`llm_client.py` / `llm_assist.py` 依赖 **标准库 + 环境变量**（见 `llm_client.py` 文档字符串），无需额外 pip 包即可跑通「auto / ollama / openai 兼容端点」逻辑；云端调用需自行配置 `LLM_API_KEY` 等。子命令示例：`python llm_assist.py generate-tests`、`python llm_assist.py analyze-report --report reports/benchmark_latest.json`。
+`llm_client.py` / `llm_assist.py` 仅依赖 **标准库 + 环境变量**（见 `llm_client.py` 模块说明）；云端需配置 **`LLM_API_KEY`** 等，本地可 **`LLM_BACKEND=ollama`**。**不进 CI 主链**，产出默认在 **`reports/llm_*`**（与 `reports/` 一同被 `.gitignore` 忽略，需自留备份）。
+
+常用子命令（均需先能连上模型）：
+
+```powershell
+python llm_assist.py --help
+python llm_assist.py generate-tests
+python llm_assist.py analyze-report --report reports/benchmark_latest.json
+python llm_assist.py analyze-logs --input reports/traffic_record_latest.jsonl
+python llm_assist.py complete-cases --format jsonl -n 2 --input agent-eval/datasets/tool_eval.jsonl
+python llm_assist.py complete-cases --format yaml -n 2 --input api-automation-demo/data/api_cases.yaml
+python llm_assist.py explain-code --path chaos_service/resilience.py --question "限流 Redis 异常时行为"
+python llm_assist.py contract-audit
+```
+
+输出均为**草稿**，合并进仓库或数据集前请**人工审查**并跑 **`pytest`**。详情见 **`docs/AI_PROJECT_CONTEXT.md`** §2.1 K。
 
 ## CI
 
-- **主链**：`.github/workflows/qa.yml` — 安装 `requirements-dev.txt` → pytest → compose → benchmark → 安全扫描 → **`chaos_compare --strict`** → **`unified_quality_gate.py`** → **`unified_summary.py`**（**`reports/unified_summary_latest.*`** 一页汇总；Gate 失败时仍生成摘要并随 artifact 上传）。  
-- **接口自动化样例**：`.github/workflows/api-automation-demo.yml` — 独立安装 `api-automation-demo/requirements.txt`，pytest 并上传 **Allure** 原始结果 artifact。
+- **主链**：`.github/workflows/qa.yml` — 安装 `requirements-dev.txt` → pytest → compose → benchmark → 安全扫描 → **`chaos_compare --strict`** → **`trace_timeline.py`** → **`unified_quality_gate.py`** → **`unified_summary.py`**（**`reports/unified_summary_latest.*`** 等；Gate 失败时仍生成摘要并随 artifact 上传）。  
+- **`api-automation-demo/`**：独立子工程，本地可 `pytest` + `--alluredir=allure-results`；Allure 原始结果目录已写入 `.gitignore`，勿提交。
 
 ## 目录速览
 

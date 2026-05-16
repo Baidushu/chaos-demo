@@ -15,7 +15,7 @@
 | **0b. 面试口径** | [`TEST_STRATEGY.md`](TEST_STRATEGY.md)、[`PERFORMANCE_ANALYSIS.md`](PERFORMANCE_ANALYSIS.md) | 测试分层、failure model、压测结论表述；**不**替代 §0 的技术事实 |
 | **1. 跑通** | 根目录 [`README.md`](../README.md)、[`run/GUIDE.md`](run/GUIDE.md) | 命令、端口、排障；**不**重复技术细节表 |
 | **2. 子模块** | [`agent-eval/README.md`](../agent-eval/README.md) | **辅线**：工具调用稳定性评估与 `CHAOS_*`；**勿**当作「AI 主项目」讲 |
-| **2b. 接口自动化样例** | [`api-automation-demo/README.md`](../api-automation-demo/README.md) | pytest + httpx + YAML + Allure + CI，与主服务解耦 |
+| **2b. 接口自动化样例** | [`api-automation-demo/README.md`](../api-automation-demo/README.md) | pytest + httpx + YAML + Allure，与主服务解耦（本地运行） |
 | **3. 可选** | 面试/深挖/待办/个人，见下表 | 叙述与模板，**不**复制 §0 的变量表与 API 全表 |
 
 **禁止**：在多篇 md 里重复维护「全量环境变量表」「全量 API 表」；应写「见 `AI_PROJECT_CONTEXT` §x」。
@@ -69,7 +69,7 @@
 | `docs/TEST_STRATEGY.md` | 测试分层、覆盖模型、failure model、覆盖率方法论 |
 | `docs/PERFORMANCE_ANALYSIS.md` | 熔断 / 限流算法 / 超时保护的面试口径 |
 | `agent-eval/README.md` | 辅线：工具调用稳定性评测脚本 |
-| `api-automation-demo/README.md` | pytest + httpx + YAML + Allure 样例与 CI |
+| `api-automation-demo/README.md` | pytest + httpx + YAML + Allure 样例（本地） |
 | `k8s/CHAOS_LITE.md` | 可选 K8s 与混沌说明 |
 
 *若新增长文，先判断能否只扩写 `AI_PROJECT_CONTEXT` 或只加链接行，避免再拆一本「第三套事实」。*

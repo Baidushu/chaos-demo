@@ -12,6 +12,7 @@ env/
 # Local / generated run artifacts
 reports/
 agent-eval/reports/
+api-automation-demo/allure-results/
 
 # IDE / OS
 .idea/

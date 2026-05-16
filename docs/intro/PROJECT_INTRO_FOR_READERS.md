@@ -30,7 +30,6 @@
 | `k8s/` | 可选清单与 `CHAOS_LITE.md`，不跑 CI 默认 |
 | `api-automation-demo/` | **pytest + httpx + YAML + Allure**：接口自动化样例目录，与主链解耦 |
 | `.github/workflows/qa.yml` | 主 CI；顺序见 `AI_PROJECT_CONTEXT` §7 |
-| `.github/workflows/api-automation-demo.yml` | 独立跑子目录 pytest + Allure artifact |
 
 ---
 

@@ -1,0 +1,3 @@
+{"event":"request","path":"/order","status":201}
+{"event":"error","status":503,"msg":"inventory busy"}
+{"level":"INFO","message":"rate limit","path":"/order"}
