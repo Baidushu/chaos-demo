@@ -24,5 +24,8 @@ Thumbs.db
 # Cursor / Claude 本地配置
 .claude/
 
+# 本地/个人文档目录（仅本地保留，不推送到远程）
+docs/
+
 # 本地 LLM 密钥（复制 local_llm_env.example.ps1 为 local_llm_env.ps1；勿提交）
 local_llm_env.ps1
