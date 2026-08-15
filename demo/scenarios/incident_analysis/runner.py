@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -24,6 +25,9 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from ai_platform.core import PlatformConfig, PlatformFactory, AIPlatformService
+from ai_platform.llm.config import load_env_file, load_gateway_config
+from ai_platform.llm.gateway import LLMGateway
+from ai_platform.llm.types import LLMRequest
 from ai_platform.security.policy import SecurityPolicy
 from ai_platform.tools.base import BaseTool
 from ai_platform.tools.registry import ToolRegistry
@@ -33,6 +37,16 @@ from ai_platform.workflow.engine import WorkflowEngine
 from ai_platform.agent.runtime import AgentRuntime
 from ai_platform.agent.state import AgentState
 from ai_platform.agent.context import AgentContext
+
+# 读入仓库根 .env（含 LLM_GATEWAY_*，如 DeepSeek key）；已设环境变量优先
+load_env_file()
+
+# 真 LLM 诊断的显式开关（默认关闭，保证测试离线确定性）：
+#   INCIDENT_LLM_ENABLED=1 python demo/scenarios/incident_analysis/runner.py
+# 或 CLI: python demo/scenarios/incident_analysis/runner.py --llm
+_LLM_ENABLED = os.environ.get("INCIDENT_LLM_ENABLED", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
 
 
 # ── Mock Tools (模拟: 日志分析, 指标查询, 根因分析) ────────────────
@@ -151,28 +165,98 @@ class AnalyzeIncidentTool(BaseTool):
         "logs_summary": {"type": str, "required": True},
         "metrics_summary": {"type": str, "required": True},
         "symptom": {"type": str, "required": False},
+        "use_llm": {"type": bool, "required": False},
     }
 
     def execute(self, params: dict[str, Any], *, context: Any = None) -> ToolExecutionResult:
-        """匹配最可能的根因并返回报告。"""
+        """根因分析：显式开启 LLM 时由真大模型生成报告，否则规则匹配（降级链一致）。"""
         logs_text = params.get("logs_summary", "")
         metrics_text = params.get("metrics_summary", "")
+        symptom = params.get("symptom", "")
+        use_llm = bool(params.get("use_llm", _LLM_ENABLED))
 
-        # Simple matching logic
-        if "Connection pool exhausted" in logs_text or "OOM" in logs_text:
-            report = _ROOT_CAUSE_MAP["Redis连接池耗尽"]
-        elif "slow" in logs_text.lower() or "3200ms" in logs_text:
-            report = _ROOT_CAUSE_MAP["数据库慢查询"]
-        elif "404" in params.get("symptom", "") or "缓存" in logs_text:
-            report = _ROOT_CAUSE_MAP["缓存不一致"]
-        else:
-            report = _ROOT_CAUSE_MAP["Redis连接池耗尽"]  # default
+        if use_llm:
+            report = self._analyze_with_llm(logs_text, metrics_text, symptom)
+            if report is not None:
+                return ToolExecutionResult(
+                    tool=self.name, ok=True, result=report,
+                    attempts=[{"tool": self.name, "result": "ok"}],
+                    metadata={
+                        "response_text": f"根因分析完成(LLM), 置信度: {report['confidence']:.0%}",
+                        "analysis_backend": "llm",
+                    }
+                )
 
+        # 降级链：LLM 未启用/不可用/输出不合法 → 规则匹配
+        report = self._analyze_by_rule(logs_text, metrics_text, symptom)
         return ToolExecutionResult(
             tool=self.name, ok=True, result=report,
             attempts=[{"tool": self.name, "result": "ok"}],
-            metadata={"response_text": f"根因分析完成, 置信度: {report['confidence']:.0%}"}
+            metadata={
+                "response_text": f"根因分析完成(规则), 置信度: {report['confidence']:.0%}",
+                "analysis_backend": "rule",
+            }
         )
+
+    @staticmethod
+    def _analyze_by_rule(logs_text: str, metrics_text: str, symptom: str) -> dict[str, Any]:
+        """写死数据 + 规则匹配（无网络依赖的确定性降级路径）。"""
+        if "Connection pool exhausted" in logs_text or "OOM" in logs_text:
+            return _ROOT_CAUSE_MAP["Redis连接池耗尽"]
+        if "slow" in logs_text.lower() or "3200ms" in logs_text:
+            return _ROOT_CAUSE_MAP["数据库慢查询"]
+        if "404" in symptom or "缓存" in logs_text:
+            return _ROOT_CAUSE_MAP["缓存不一致"]
+        return _ROOT_CAUSE_MAP["Redis连接池耗尽"]  # default
+
+    @staticmethod
+    def _analyze_with_llm(logs_text: str, metrics_text: str, symptom: str) -> dict[str, Any] | None:
+        """真 LLM 根因分析；任何异常/输出不合法返回 None（上层降级到规则匹配）。"""
+        prompt = (
+            "你是资深 SRE 故障诊断专家。根据以下日志、指标和用户描述，"
+            "输出一个 JSON 对象（不要输出其他内容），字段：\n"
+            '{"problem": "故障现象", "root_cause": "根因", '
+            '"evidence": ["证据1", "证据2"], "suggestion": "修复建议", '
+            '"confidence": 0.0-1.0 置信度}\n'
+            f"用户描述: {symptom or '服务异常'}\n"
+            f"日志摘要: {logs_text[:3000]}\n"
+            f"指标摘要: {metrics_text[:2000]}\n"
+            "只输出 JSON。"
+        )
+        try:
+            config = load_gateway_config(provider=os.getenv("LLM_GATEWAY_PROVIDER", "").strip() or None)
+            gateway = LLMGateway(config=config)
+            response = gateway.generate(
+                LLMRequest(
+                    prompt=prompt,
+                    system="",
+                    provider=config.provider,
+                    model=config.model,
+                    response_format="json",
+                    timeout_sec=config.timeout_sec,
+                    metadata={"caller": "incident_analysis.analyze_incident"},
+                )
+            )
+        except Exception:
+            return None
+
+        report = response.parsed_json
+        if not isinstance(report, dict):
+            return None
+        # 结构校验：字段不齐则视为不可用
+        required = {"problem", "root_cause", "evidence", "suggestion", "confidence"}
+        if not required.issubset(report.keys()):
+            return None
+        if not isinstance(report.get("evidence"), list) or not report.get("evidence"):
+            return None
+        try:
+            confidence = float(report.get("confidence"))
+        except (TypeError, ValueError):
+            return None
+        if not (0.0 <= confidence <= 1.0):
+            return None
+        report["confidence"] = confidence
+        return report
 
 
 # ── Workflow Node ────────────────────────────────────────────────────
@@ -181,8 +265,9 @@ class IncidentDiagnosisNode(BaseNode):
     """故障诊断工作流节点: 日志 → 指标 → 分析 → 报告"""
     name = "incident_diagnosis"
 
-    def __init__(self, executor: ToolExecutor) -> None:
+    def __init__(self, executor: ToolExecutor, *, llm_enabled: bool = False) -> None:
         self._executor = executor
+        self._llm_enabled = llm_enabled
 
     def execute(self, state: AgentState, context: AgentContext) -> AgentState:
         request_text = state.request if isinstance(state.request, str) else str(state.request)
@@ -197,7 +282,7 @@ class IncidentDiagnosisNode(BaseNode):
         if metrics_result.ok:
             state.add_tool_result(tool="query_metrics", result=metrics_result.result)
 
-        # Step 3: 根因分析
+        # Step 3: 根因分析（use_llm 由 runner 显式开启，未开启走规则降级）
         logs_summary = str(logs_result.result.get("logs", [])[:3])
         metrics_summary = str(metrics_result.result.get("metrics", {}))
         symptom = "大量500错误" if "500" in request_text else ("延迟飙升" if "延迟" in request_text else "缓存不一致")
@@ -205,12 +290,15 @@ class IncidentDiagnosisNode(BaseNode):
             "logs_summary": logs_summary,
             "metrics_summary": metrics_summary,
             "symptom": symptom,
+            "use_llm": self._llm_enabled,
         })
 
         if analysis.ok:
-            state.add_tool_result(tool="analyze_incident", result=analysis.result)
-            state.set_answer(analysis.result)
-            state.metadata["incident_report"] = analysis.result
+            report = dict(analysis.result)
+            report["analysis_backend"] = analysis.metadata.get("analysis_backend", "rule")
+            state.add_tool_result(tool="analyze_incident", result=report)
+            state.set_answer(report)
+            state.metadata["incident_report"] = report
             state.metadata["diagnosis_complete"] = True
 
         return state
@@ -218,8 +306,12 @@ class IncidentDiagnosisNode(BaseNode):
 
 # ── Runner ───────────────────────────────────────────────────────────
 
-def build_platform_service() -> AIPlatformService:
-    """构建带诊断工具和节点的AI Platform服务。"""
+def build_platform_service(*, llm_enabled: bool = False) -> AIPlatformService:
+    """构建带诊断工具和节点的AI Platform服务。
+
+    llm_enabled=True 时根因分析由真 LLM 生成（provider 走 LLM_GATEWAY_*，
+    .env 可配 DeepSeek），失败自动降级规则匹配。
+    """
     config = PlatformConfig.default()
     factory = PlatformFactory(config)
 
@@ -233,7 +325,7 @@ def build_platform_service() -> AIPlatformService:
 
     # 创建工作流
     workflow = WorkflowEngine()
-    workflow.register(IncidentDiagnosisNode(executor))
+    workflow.register(IncidentDiagnosisNode(executor, llm_enabled=llm_enabled))
 
     runtime = AgentRuntime(
         workflow=workflow,
@@ -244,9 +336,11 @@ def build_platform_service() -> AIPlatformService:
     return AIPlatformService(agent_runtime=runtime, config=config)
 
 
-def run_incident_diagnosis(case_id: str | None = None) -> dict[str, Any]:
-    """运行故障诊断演示。"""
-    service = build_platform_service()
+def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | None = None) -> dict[str, Any]:
+    """运行故障诊断演示。llm_enabled=None 时跟随 INCIDENT_LLM_ENABLED 环境变量。"""
+    if llm_enabled is None:
+        llm_enabled = _LLM_ENABLED
+    service = build_platform_service(llm_enabled=llm_enabled)
 
     # 加载用例
     cases_path = Path(__file__).parent / "case.json"
@@ -283,6 +377,7 @@ def run_incident_diagnosis(case_id: str | None = None) -> dict[str, Any]:
             "report": report,
             "trace_id": result.trace_id,
             "elapsed_ms": round(elapsed, 1),
+            "analysis_backend": report.get("analysis_backend", "rule") if isinstance(report, dict) else "unknown",
             "expected_root_cause": case["expected_root_cause"],
             "expected_tools": case["expected_tools"],
             "tools_called": [tr["tool"] for tr in getattr(service._runtime, "workflow", None) and hasattr(service, "_runtime") and []],
@@ -322,5 +417,11 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="AI Incident Diagnosis Demo")
     parser.add_argument("--case", type=str, default=None, help="Run specific case (e.g. incident-001)")
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="根因分析由真 LLM 生成（provider 走 LLM_GATEWAY_*，.env 可配 DeepSeek）；"
+             "失败自动降级规则匹配。等价于 INCIDENT_LLM_ENABLED=1",
+    )
     args = parser.parse_args()
-    run_incident_diagnosis(args.case)
+    run_incident_diagnosis(args.case, llm_enabled=args.llm or None)
