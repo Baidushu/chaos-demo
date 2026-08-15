@@ -1,0 +1,153 @@
+name: AI Quality Pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"   # 02:00 UTC daily
+
+jobs:
+  # ── Security Scan ────────────────────────────────────────────────────
+  security-scan:
+    name: "AI Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ai.txt pytest --break-system-packages
+
+      - name: Prompt Injection Detection
+        run: |
+          echo ">>> Running prompt injection tests..."
+          pytest tests/core_platform/test_sec_prompt_guard.py -v --tb=long -q
+          if [ $? -ne 0 ]; then
+            echo "SECURITY BLOCKED: Prompt injection tests failed."
+            exit 1
+          fi
+
+      - name: Input Validation
+        run: |
+          echo ">>> Running input validation tests..."
+          pytest tests/core_platform/test_sec_input_validator.py -v --tb=long -q
+          if [ $? -ne 0 ]; then
+            echo "SECURITY BLOCKED: Input validation tests failed."
+            exit 1
+          fi
+
+      - name: Tool Permission Check
+        run: |
+          echo ">>> Running tool permission tests..."
+          pytest tests/core_platform/test_sec_permission.py -v --tb=long -q
+          if [ $? -ne 0 ]; then
+            echo "SECURITY BLOCKED: Tool permission tests failed."
+            exit 1
+          fi
+
+      - name: Output Security Check
+        run: |
+          echo ">>> Running output security tests..."
+          pytest tests/core_platform/test_sec_output_checker.py -v --tb=long -q
+          if [ $? -ne 0 ]; then
+            echo "SECURITY BLOCKED: Output security tests failed."
+            exit 1
+          fi
+
+      - name: Runtime Security Integration
+        run: |
+          echo ">>> Running runtime security integration tests..."
+          pytest tests/core_platform/test_sec_runtime_security.py -v --tb=long -q
+          if [ $? -ne 0 ]; then
+            echo "SECURITY BLOCKED: Runtime security integration tests failed."
+            exit 1
+          fi
+
+      - name: Security Summary
+        if: always()
+        run: |
+          echo ""
+          echo "========================================"
+          echo "  AI SECURITY SCAN COMPLETE"
+          echo "========================================"
+
+  # ── AI Evaluation ────────────────────────────────────────────────────
+  ai-evaluation:
+    name: "AI Evaluation Suite"
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ai.txt pytest --break-system-packages
+
+      - name: Run Evaluation Engine Tests
+        run: |
+          echo ">>> Running evaluation engine tests..."
+          pytest tests/core_platform/test_eval_engine.py tests/core_platform/test_eval_evaluator.py tests/core_platform/test_eval_gate.py tests/core_platform/test_eval_result.py tests/core_platform/test_eval_metrics.py tests/core_platform/test_eval_regression.py tests/core_platform/test_eval_dataset.py -v --tb=long -q
+
+      - name: Run Observability Tests
+        run: |
+          echo ">>> Running observability tests..."
+          pytest tests/core_platform/test_obs_trace.py tests/core_platform/test_obs_span.py tests/core_platform/test_obs_event.py tests/core_platform/test_obs_metrics.py tests/core_platform/test_obs_collector.py tests/core_platform/test_obs_runtime_trace.py -v --tb=long -q
+
+      - name: Generate AI Evaluation Report
+        run: |
+          echo ">>> Generating real evaluation report..."
+          python scripts/generate_evaluation_report.py \
+            --raw agent-eval/reports/agent_raw_latest.json \
+            --output reports/evaluation-report.json
+
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-evaluation-report
+          path: reports/evaluation-report.json
+
+  # ── Quality Gate ─────────────────────────────────────────────────────
+  quality-gate:
+    name: "Quality Gate"
+    runs-on: ubuntu-latest
+    needs: ai-evaluation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download evaluation report
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-evaluation-report
+          path: reports/
+
+      - name: Run Quality Gate
+        run: |
+          echo ">>> Running quality gate..."
+          python scripts/run_quality_gate.py --report reports/evaluation-report.json
+
+      - name: Gate Summary
+        if: always()
+        run: |
+          echo "========================================"
+          echo "  QUALITY GATE COMPLETE"
+          echo "========================================"

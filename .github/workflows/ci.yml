@@ -1,0 +1,140 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  # ── Stage 1: Fast feedback (lint + core tests) ───────────────────────
+  fast-feedback:
+    name: "Fast Feedback"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ai.txt
+          pip install pytest pytest-html --break-system-packages
+
+      - name: Run core tests
+        run: >
+          pytest tests/deployment/
+          tests/core_platform/
+          tests/test_llm_types.py
+          --html=reports/pytest-report.html
+          --self-contained-html
+          --tb=short
+          -q
+
+      - name: Upload pytest HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: reports/pytest-report.html
+
+      - name: Upload pytest JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-junit
+          path: reports/pytest-report.xml
+
+  # ── Stage 2: AI Quality Gate ─────────────────────────────────────────
+  ai-quality:
+    name: "AI Quality Gate"
+    runs-on: ubuntu-latest
+    needs: fast-feedback
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ai.txt
+          pip install pytest --break-system-packages
+
+      - name: AI Security Tests
+        run: |
+          echo "=== Prompt Injection Tests ==="
+          pytest tests/core_platform/test_sec_prompt_guard.py -v --tb=short -q
+          echo "=== Tool Permission Tests ==="
+          pytest tests/core_platform/test_sec_permission.py -v --tb=short -q
+          echo "=== Output Security Tests ==="
+          pytest tests/core_platform/test_sec_output_checker.py -v --tb=short -q
+          echo "=== Runtime Security Tests ==="
+          pytest tests/core_platform/test_sec_runtime_security.py -v --tb=short -q
+
+      - name: AI Evaluation (Regression)
+        run: |
+          echo "=== Evaluation Engine Tests ==="
+          pytest tests/core_platform/test_eval_engine.py tests/core_platform/test_eval_evaluator.py tests/core_platform/test_eval_gate.py tests/core_platform/test_eval_result.py tests/core_platform/test_eval_metrics.py tests/core_platform/test_eval_regression.py tests/core_platform/test_eval_dataset.py -v --tb=short -q
+          echo "=== Generate Evaluation Report ==="
+          python scripts/generate_evaluation_report.py \
+            --raw agent-eval/reports/agent_raw_latest.json \
+            --output reports/evaluation-report.json
+
+      - name: Quality Gate
+        run: |
+          python scripts/run_quality_gate.py --report reports/evaluation-report.json
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-report
+          path: reports/evaluation-report.json
+
+  # ── Stage 3: Docker Build ────────────────────────────────────────────
+  docker-build:
+    name: "Docker Build"
+    runs-on: ubuntu-latest
+    needs: ai-quality
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -f Dockerfile.ai -t chaos-demo-ai:latest .
+
+      - name: Verify image
+        run: |
+          docker images chaos-demo-ai:latest
+          echo "Image built successfully."
+
+      - name: Smoke test (container starts)
+        run: |
+          docker run -d --name chaos-demo-ai-smoke -p 8000:8000 chaos-demo-ai:latest
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8000/api/v1/health >/dev/null 2>&1; then
+              echo "Container healthy."
+              HEALTH=$(curl -s http://localhost:8000/api/v1/health)
+              echo "Health response: $HEALTH"
+              docker stop chaos-demo-ai-smoke
+              docker rm chaos-demo-ai-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Container failed to start."
+          docker logs chaos-demo-ai-smoke
+          docker stop chaos-demo-ai-smoke
+          docker rm chaos-demo-ai-smoke
+          exit 1

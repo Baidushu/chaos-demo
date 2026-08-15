@@ -1,0 +1,70 @@
+{
+  "scenario": "AI Regression Quality Gate",
+  "version": "1.0.0",
+  "description": "模拟Prompt或模型版本升级时的回归质量检测 — 基线 vs 候选对比",
+  "baseline": {
+    "version": "v2.0.0",
+    "prompt_version": "v1",
+    "score": 0.95,
+    "metrics": {
+      "tool_selection_accuracy": 0.96,
+      "arg_accuracy": 0.94,
+      "task_success_rate": 0.95,
+      "retry_rate": 0.05,
+      "avg_tool_calls_per_task": 2.1,
+      "avg_token_per_task": 450,
+      "hallucination_rate": 0.02,
+      "planner_invalid_rate": 0.03
+    }
+  },
+  "candidate_degraded": {
+    "version": "v2.1.0",
+    "prompt_version": "v2",
+    "score": 0.72,
+    "metrics": {
+      "tool_selection_accuracy": 0.71,
+      "arg_accuracy": 0.68,
+      "task_success_rate": 0.72,
+      "retry_rate": 0.35,
+      "avg_tool_calls_per_task": 4.8,
+      "avg_token_per_task": 1200,
+      "hallucination_rate": 0.18,
+      "planner_invalid_rate": 0.22
+    }
+  },
+  "candidate_improved": {
+    "version": "v2.2.0",
+    "prompt_version": "v3",
+    "score": 0.97,
+    "metrics": {
+      "tool_selection_accuracy": 0.98,
+      "arg_accuracy": 0.96,
+      "task_success_rate": 0.97,
+      "retry_rate": 0.02,
+      "avg_tool_calls_per_task": 1.8,
+      "avg_token_per_task": 380,
+      "hallucination_rate": 0.01,
+      "planner_invalid_rate": 0.01
+    }
+  },
+  "regression_thresholds": {
+    "max_tool_selection_accuracy_drop": 0.10,
+    "max_arg_accuracy_drop": 0.10,
+    "max_retry_rate_surge": 0.10,
+    "max_planner_invalid_rate_surge": 0.05
+  },
+  "evaluation_cases": [
+    {"id": "eval-001", "input": "创建订单: 产品A 数量5", "expected_tools": ["place_order"], "expected_args": {"item_name": "产品A", "quantity": 5}},
+    {"id": "eval-002", "input": "查询订单 ORD-123", "expected_tools": ["query_order"], "expected_args": {"order_id": "ORD-123"}},
+    {"id": "eval-003", "input": "取消订单 ORD-456", "expected_tools": ["cancel_order"], "expected_args": {"order_id": "ORD-456"}},
+    {"id": "eval-004", "input": "帮我下单买3个Widget-B寄到北京", "expected_tools": ["place_order"], "expected_args": {"item_name": "Widget-B", "quantity": 3, "address": "北京"}},
+    {"id": "eval-005", "input": "查看订单ORD-789详情", "expected_tools": ["query_order"], "expected_args": {"order_id": "ORD-789"}}
+  ],
+  "expected_output_format": {
+    "baseline_score": "float - 基线版本评分",
+    "current_score": "float - 候选版本评分",
+    "delta": "dict - 各维度变化量",
+    "gate_status": "string - PASS or FAIL",
+    "reasons": "list[string] - 失败原因"
+  }
+}

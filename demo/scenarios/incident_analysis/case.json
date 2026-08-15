@@ -1,0 +1,51 @@
+{
+  "scenario": "AI Incident Diagnosis",
+  "version": "1.0.0",
+  "description": "模拟线上订单服务故障诊断 - 用户报告大量500错误，Agent调用日志分析和指标查询工具进行根因分析",
+  "inputs": [
+    {
+      "id": "incident-001",
+      "user_input": "订单接口大量500错误，告警显示过去15分钟内错误率超过30%，请分析原因",
+      "expected_root_cause": "Redis连接池耗尽",
+      "expected_tools": ["query_metrics", "query_logs", "analyze_incident"],
+      "severity": "critical",
+      "context": {
+        "service": "order-api",
+        "time_range": "15m",
+        "error_rate_threshold": 0.30
+      }
+    },
+    {
+      "id": "incident-002",
+      "user_input": "帮我查一下为什么创建订单的延迟突然从100ms涨到了5秒",
+      "expected_root_cause": "数据库慢查询 + 连接池饱和",
+      "expected_tools": ["query_metrics", "query_logs", "analyze_incident"],
+      "severity": "high",
+      "context": {
+        "service": "order-api",
+        "metric": "latency_p99",
+        "baseline_ms": 100,
+        "current_ms": 5000
+      }
+    },
+    {
+      "id": "incident-003",
+      "user_input": "客户反馈订单查询经常返回404，但实际上订单是存在的，怎么回事",
+      "expected_root_cause": "Redis缓存与数据库不一致",
+      "expected_tools": ["query_metrics", "query_logs", "analyze_incident"],
+      "severity": "medium",
+      "context": {
+        "service": "order-api",
+        "endpoint": "/order/<id>",
+        "symptom": "false_404"
+      }
+    }
+  ],
+  "expected_output_format": {
+    "problem": "string - 故障现象描述",
+    "root_cause": "string - 根因分析",
+    "evidence": "list[string] - 证据链",
+    "suggestion": "string - 修复建议",
+    "confidence": "float - 置信度 0.0-1.0"
+  }
+}
