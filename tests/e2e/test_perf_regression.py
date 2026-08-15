@@ -70,7 +70,7 @@ def test_drop_injection_increases_error_rate(app_state, client, monkeypatch):
     fi.clear_all_faults(app_state.redis_client)
 
     error_rate = errors / total
-    assert error_rate >= 0.8, f"Expected error rate >= 80%, got {error_rate:.0%}"
+    assert error_rate == 1.0, f"Expected error rate == 100%, got {error_rate:.0%}"
 
 
 def test_recovery_after_fault_clear(app_state, client, monkeypatch):
@@ -94,21 +94,25 @@ def test_recovery_after_fault_clear(app_state, client, monkeypatch):
     monkeypatch.setattr(fi, "_random", type("R", (), {"random": lambda self: 1.0, "uniform": lambda self, a, b: 0.5})())
 
     # 恢复后应正常
-    ok_count = 0
+    statuses = []
     for _ in range(10):
         resp = client.post("/order", json={"item_id": "sku-rec-2", "quantity": 1})
-        if resp.status_code in (201, 200, 202):
-            ok_count += 1
+        statuses.append(resp.status_code)
 
-    assert ok_count >= 8, f"Expected >= 8 successful requests after recovery, got {ok_count}"
+    assert statuses == [201] * 10, f"Expected all requests to recover with 201, got {statuses}"
 
 
 def test_circuit_breaker_opens_after_threshold_failures(app_state, client, monkeypatch):
     """连续失败达到阈值后，熔断器应打开，后续请求返回 202。"""
     app_state.INVENTORY_BUSY_PROB = 1.0  # 强制所有请求失败
+    app_state.BUSINESS_TIMEOUT_MS = 999
     app_state.BREAKER_FAIL_THRESHOLD = 3
     app_state.BREAKER_WINDOW_SEC = 60
     app_state.BREAKER_OPEN_SEC = 30
+    app_state.MIN_REQUEST_AMOUNT = 3
+    app_state.BREAKER_FAILURE_RATE_THRESHOLD = 0.5
+    monkeypatch.setattr(app_state.random, "uniform", lambda a, b: 0.01)
+    monkeypatch.setattr(app_state.random, "random", lambda: 0.0)
 
     # 触发足够多的失败
     for _ in range(5):
