@@ -447,6 +447,7 @@ def _print_report(report: dict[str, Any], elapsed_ms: float, case: dict[str, Any
     print(f"  {'─' * 50}")
     print(f"  预期根因:   {case['expected_root_cause']}")
     print(f"  诊断判定:   {'正确' if match else '错误（与预期不符）'}")
+    print(f"  分析后端:   {report.get('analysis_backend', 'rule')} / 数据来源: 日志={report.get('log_source', 'simulated')} 指标={report.get('metrics_source', 'simulated')}")
     print(f"  耗时:       {elapsed_ms:.1f}ms")
     print(f"  Trace ID:   (collector snapshot available)")
 
