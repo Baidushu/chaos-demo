@@ -27,6 +27,7 @@ Thumbs.db
 
 # 本地/个人文档目录（仅本地保留，不推送到远程）
 docs/
+PROJECT_LEARNING_PROGRESS.md
 
 # 本地 LLM 密钥（复制 local_llm_env.example.ps1 为 local_llm_env.ps1；勿提交）
 local_llm_env.ps1
