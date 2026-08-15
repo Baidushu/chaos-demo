@@ -16,7 +16,24 @@ if str(_PROJECT_ROOT) not in sys.path:
 from demo.scenarios.incident_analysis.runner import (
     run_incident_diagnosis,
     build_platform_service,
+    _root_cause_matches,
 )
+
+
+class TestRootCauseMatch:
+    """匹配启发式：防 ASCII 前缀假阳性（Redi 陷阱）。"""
+
+    def test_cjk_keyword_hit(self):
+        assert _root_cause_matches("Redis连接池耗尽", "Redis连接池耗尽 — 高并发下占满") is True
+        assert _root_cause_matches("数据库慢查询 + 连接池饱和", "根因是数据库慢查询导致连接池饱和") is True
+
+    def test_ascii_prefix_not_fooled(self):
+        # 曾经用 expected[:4]='Redi' 匹配，任何 Redis 开头的错误根因都假阳性
+        assert _root_cause_matches("Redis连接池耗尽", "Redis内存达到maxmemory限制导致OOM") is False
+        assert _root_cause_matches("Redis缓存与数据库不一致", "Redis内存达到maxmemory限制") is False
+
+    def test_empty_actual(self):
+        assert _root_cause_matches("Redis连接池耗尽", "") is False
 
 
 class TestIncidentDemo:

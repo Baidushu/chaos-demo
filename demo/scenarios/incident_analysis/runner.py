@@ -68,7 +68,13 @@ _SIMULATED_LOGS = {
     "mysql": [
         "[SLOW] 2026-07-25T10:14:30Z Query took 3200ms: SELECT * FROM orders WHERE status='pending'",
         "[ERROR] 2026-07-25T10:15:00Z Too many connections: max=200, current=200",
-    ]
+        "[WARN] 2026-07-25T10:14:00Z slow_db fault injection triggered at 10:14:30",
+    ],
+    "cache": [
+        "[WARN] 2026-07-25T10:16:00Z cache write failed after 3 retries: key='order:ORD-xxx'",
+        "[ERROR] 2026-07-25T10:16:01Z Redis connection refused during cache update (drop fault injected)",
+        "[WARN] 2026-07-25T10:15:00Z stale cache hit detected: TTL=-1 but DB row was updated at 10:14",
+    ],
 }
 
 _SIMULATED_METRICS = {
@@ -79,7 +85,23 @@ _SIMULATED_METRICS = {
         "qps": 1200,
         "active_connections": 100,
         "redis_memory_used_pct": 0.95,
-    }
+    },
+    "mysql": {
+        "error_rate": 0.02,
+        "latency_p99_ms": 5000,
+        "latency_p50_ms": 320,
+        "qps": 600,
+        "slow_query_count": 128,
+        "db_connections": 200,
+    },
+    "cache": {
+        "error_rate": 0.05,
+        "latency_p99_ms": 180,
+        "latency_p50_ms": 60,
+        "qps": 900,
+        "cache_miss_rate": 0.42,
+        "stale_keys": 3,
+    },
 }
 
 _ROOT_CAUSE_MAP = {
@@ -306,13 +328,18 @@ class IncidentDiagnosisNode(BaseNode):
     def execute(self, state: AgentState, context: AgentContext) -> AgentState:
         request_text = state.request if isinstance(state.request, str) else str(state.request)
 
+        # 证据源选择：由用例上下文驱动（case.json 的 context.service 经元数据透传），
+        # 保证「延迟飙升」用例查 mysql 日志、「缓存不一致」用例查 cache 日志——
+        # 否则 LLM 拿到同一份证据只会给出同一个答案。
+        service = state.metadata.get("service", "order-api")
+
         # Step 1: 查询日志
-        logs_result = self._executor.execute("query_logs", {"service": "order-api"})
+        logs_result = self._executor.execute("query_logs", {"service": service})
         if logs_result.ok:
             state.add_tool_result(tool="query_logs", result=logs_result.result, metadata={"count": logs_result.result.get("count", 0)})
 
         # Step 2: 查询指标
-        metrics_result = self._executor.execute("query_metrics", {"service": "order-api"})
+        metrics_result = self._executor.execute("query_metrics", {"service": service})
         if metrics_result.ok:
             state.add_tool_result(tool="query_metrics", result=metrics_result.result)
 
@@ -373,6 +400,17 @@ def build_platform_service(*, llm_enabled: bool = False) -> AIPlatformService:
     return AIPlatformService(agent_runtime=runtime, config=config)
 
 
+def _root_cause_matches(expected: str, actual: str) -> bool:
+    """判定根因是否命中预期。
+
+    取预期根因的前 4 个非 ASCII 字符作为关键词：'Redis连接池耗尽' → '连接池耗'。
+    不能用 `expected[:4]`——对以 ASCII 开头的预期串会切出 'Redi'，
+    任何以 Redis 开头的错误根因都会假阳性。
+    """
+    keyword = "".join(ch for ch in expected if not ch.isascii())[:4] or expected[:4]
+    return bool(keyword) and keyword in actual
+
+
 def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | None = None) -> dict[str, Any]:
     """运行故障诊断演示。llm_enabled=None 时跟随 INCIDENT_LLM_ENABLED 环境变量。"""
     if llm_enabled is None:
@@ -398,7 +436,11 @@ def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | No
         print(f"{'='*60}")
 
         start = time.perf_counter()
-        result = service.run(case["user_input"], mode="rule")
+        result = service.run(
+            case["user_input"],
+            mode="rule",
+            metadata={"service": (case.get("context") or {}).get("service", "order-api")},
+        )
         elapsed = (time.perf_counter() - start) * 1000
 
         report: dict[str, Any]
@@ -422,7 +464,7 @@ def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | No
 
         # Check if root cause matches
         actual_rc = report.get("root_cause", "") if isinstance(report, dict) else ""
-        r["root_cause_match"] = case["expected_root_cause"] in actual_rc or case["expected_root_cause"][:4] in actual_rc
+        r["root_cause_match"] = _root_cause_matches(case["expected_root_cause"], actual_rc)
 
         results.append(r)
         _print_report(report, elapsed, case, match=r["root_cause_match"])

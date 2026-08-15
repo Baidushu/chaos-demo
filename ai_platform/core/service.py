@@ -89,7 +89,13 @@ class AIPlatformService:
     def config(self) -> PlatformConfig:
         return self._config
 
-    def run(self, request: Any, *, mode: str | None = None) -> PlatformResult:
+    def run(
+        self,
+        request: Any,
+        *,
+        mode: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> PlatformResult:
         """Execute the complete platform pipeline.
 
         Flow:
@@ -99,12 +105,17 @@ class AIPlatformService:
           4. Evaluation (if enabled)
           5. Quality gate (if enabled)
           6. Return unified PlatformResult
+
+        metadata 透传给 AgentState.metadata（贯穿工作流节点）。
         """
         effective_mode = mode or self._config.mode
+        runtime_metadata = {"mode": effective_mode}
+        if metadata:
+            runtime_metadata.update(metadata)
 
         # Step 1-3: Execute agent (security + runtime is inside AgentRuntime.run_state)
         try:
-            state = self._runtime.run(request, metadata={"mode": effective_mode})
+            state = self._runtime.run(request, metadata=runtime_metadata)
         except Exception as exc:
             return PlatformResult(
                 success=False,

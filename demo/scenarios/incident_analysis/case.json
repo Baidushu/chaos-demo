@@ -22,7 +22,7 @@
       "expected_tools": ["query_metrics", "query_logs", "analyze_incident"],
       "severity": "high",
       "context": {
-        "service": "order-api",
+        "service": "mysql",
         "metric": "latency_p99",
         "baseline_ms": 100,
         "current_ms": 5000
@@ -35,7 +35,7 @@
       "expected_tools": ["query_metrics", "query_logs", "analyze_incident"],
       "severity": "medium",
       "context": {
-        "service": "order-api",
+        "service": "cache",
         "endpoint": "/order/<id>",
         "symptom": "false_404"
       }
