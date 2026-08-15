@@ -1,0 +1,68 @@
+# ============================================================
+# Chaos-Demo AI Platform — Production Dockerfile
+# ============================================================
+#
+# Build:
+#   docker build -t chaos-demo-ai:latest .
+#
+# Run:
+#   docker run -p 8000:8000 chaos-demo-ai:latest
+#
+# ============================================================
+
+# ── Stage 1: Build (install deps) ──────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# System build deps (none needed for pure-Python deps)
+RUN pip install --no-cache-dir --upgrade pip
+
+# Install runtime deps to a temporary prefix
+COPY requirements-ai.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements-ai.txt
+
+# ── Stage 2: Runtime ───────────────────────────────────────
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="Chaos-Demo AI Platform"
+LABEL org.opencontainers.image.description="Enterprise AI Platform Service (Phase 3.0)"
+LABEL org.opencontainers.image.version="3.0.0"
+
+# Create non-root user
+RUN groupadd -r aiplatform && useradd -r -g aiplatform -d /app aiplatform
+
+WORKDIR /app
+
+# Copy installed deps from builder
+COPY --from=builder /install /usr/local
+
+# Copy application code
+COPY ai_platform_api.py .
+COPY ai/ ./ai/
+
+# Create directory for structured logs
+RUN mkdir -p /var/log/ai-platform && chown -R aiplatform:aiplatform /var/log/ai-platform /app
+
+# Switch to non-root
+USER aiplatform
+
+# ── Environment ────────────────────────────────────────────
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    APP_ENV=production \
+    AGENT_MODE=rule \
+    PLATFORM_OBSERVABILITY=1 \
+    PLATFORM_EVALUATION=0 \
+    PLATFORM_QUALITY_GATE=0 \
+    PLATFORM_TIMEOUT=60.0 \
+    OBSERVABILITY_LOG_LEVEL=INFO
+
+# ── Healthcheck ────────────────────────────────────────────
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')" || exit 1
+
+# ── Expose & Start ─────────────────────────────────────────
+EXPOSE 8000
+
+CMD ["uvicorn", "ai_platform_api:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

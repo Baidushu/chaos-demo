@@ -1,0 +1,5 @@
+# Chaos-Demo AI Platform — Runtime Dependencies
+# Used by Dockerfile.ai
+fastapi>=0.115.0
+pydantic>=2.0.0
+uvicorn[standard]>=0.30.0

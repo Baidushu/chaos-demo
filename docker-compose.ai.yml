@@ -1,0 +1,101 @@
+# ============================================================
+# Chaos-Demo AI Platform — Docker Compose
+# ============================================================
+#
+# Start:
+#   docker-compose -f docker-compose.ai.yml up -d
+#
+# Stop:
+#   docker-compose -f docker-compose.ai.yml down
+#
+# ============================================================
+
+services:
+  # ── AI Platform Service ──────────────────────────────────
+  ai-platform:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+    image: chaos-demo-ai:latest
+    container_name: chaos-demo-ai
+    ports:
+      - "${AI_PLATFORM_PORT:-8000}:8000"
+    environment:
+      # App runtime
+      - APP_ENV=${APP_ENV:-production}
+      - AGENT_MODE=${AGENT_MODE:-rule}
+
+      # Observability
+      - PLATFORM_OBSERVABILITY=${PLATFORM_OBSERVABILITY:-1}
+      - PLATFORM_EVALUATION=${PLATFORM_EVALUATION:-0}
+      - PLATFORM_QUALITY_GATE=${PLATFORM_QUALITY_GATE:-0}
+      - PLATFORM_TIMEOUT=${PLATFORM_TIMEOUT:-60.0}
+      - OBSERVABILITY_LOG_LEVEL=${OBSERVABILITY_LOG_LEVEL:-INFO}
+
+      # LLM (optional — mock provider by default)
+      - AGENT_LLM_PROVIDER=${AGENT_LLM_PROVIDER:-mock}
+      - AGENT_LLM_MODEL=${AGENT_LLM_MODEL:-default}
+      - AGENT_LLM_TEMPERATURE=${AGENT_LLM_TEMPERATURE:-0.1}
+      - AGENT_LLM_MAX_TOKENS=${AGENT_LLM_MAX_TOKENS:-2048}
+      - AGENT_LLM_TIMEOUT=${AGENT_LLM_TIMEOUT:-30.0}
+
+      # Redis (optional — only needed if legacy tools_client is wired)
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    networks:
+      - ai-platform-net
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_started
+
+  # ── Redis (optional — legacy tools_client + idempotency) ──
+  redis:
+    image: redis:7-alpine
+    container_name: chaos-demo-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ai-platform-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── MySQL (placeholder — for future data persistence) ─────
+  mysql:
+    image: mysql:8.0
+    container_name: chaos-demo-mysql
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-chaos-demo-root}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-chaos_demo}
+      - MYSQL_USER=${MYSQL_USER:-aiplatform}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aiplatform-pass}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - ai-platform-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-chaos-demo-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ── Networks ───────────────────────────────────────────────
+networks:
+  ai-platform-net:
+    driver: bridge
+
+# ── Volumes ────────────────────────────────────────────────
+volumes:
+  redis-data:
+    driver: local
+  mysql-data:
+    driver: local
