@@ -32,8 +32,24 @@ class TestRootCauseMatch:
         assert _root_cause_matches("Redis连接池耗尽", "Redis内存达到maxmemory限制导致OOM") is False
         assert _root_cause_matches("Redis缓存与数据库不一致", "Redis内存达到maxmemory限制") is False
 
+    def test_keyword_list_mode_tolerates_llm_wording(self):
+        # LLM 措辞自由多变：命中关键词集合中任意一个即判正确
+        keywords = ["数据库慢", "数据库连接", "慢查询", "连接池饱和"]
+        assert _root_cause_matches(
+            "数据库慢查询 + 连接池饱和",
+            "数据库连接池耗尽导致查询积压和延迟飙升，可能是由故障注入引发的慢查询累积所致",
+            keywords=keywords,
+        ) is True
+        # 关键词集合必须能排除错误诊断：Redis 类答案不应命中
+        assert _root_cause_matches(
+            "数据库慢查询 + 连接池饱和",
+            "Redis内存达到maxmemory触发OOM，进而连接池耗尽",
+            keywords=keywords,
+        ) is False
+
     def test_empty_actual(self):
         assert _root_cause_matches("Redis连接池耗尽", "") is False
+        assert _root_cause_matches("x", "", keywords=["a"]) is False
 
 
 class TestIncidentDemo:

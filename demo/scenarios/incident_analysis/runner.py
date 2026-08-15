@@ -400,13 +400,22 @@ def build_platform_service(*, llm_enabled: bool = False) -> AIPlatformService:
     return AIPlatformService(agent_runtime=runtime, config=config)
 
 
-def _root_cause_matches(expected: str, actual: str) -> bool:
+def _root_cause_matches(
+    expected: str,
+    actual: str,
+    *,
+    keywords: list[str] | None = None,
+) -> bool:
     """判定根因是否命中预期。
 
-    取预期根因的前 4 个非 ASCII 字符作为关键词：'Redis连接池耗尽' → '连接池耗'。
-    不能用 `expected[:4]`——对以 ASCII 开头的预期串会切出 'Redi'，
-    任何以 Redis 开头的错误根因都会假阳性。
+    keywords 优先（用例数据显式声明的特征词，命中任意一个即匹配）——
+    LLM 自由措辞多变，固定字符串/前缀匹配都不可靠。
+    无 keywords 时回退：取预期根因的前 4 个非 ASCII 字符作为关键词
+    （'Redis连接池耗尽' → '连接池耗'；不能用 expected[:4]，会切出 'Redi'
+    造成任何 Redis 开头的错误根因都假阳性）。
     """
+    if keywords:
+        return any(k in actual for k in keywords if k)
     keyword = "".join(ch for ch in expected if not ch.isascii())[:4] or expected[:4]
     return bool(keyword) and keyword in actual
 
@@ -464,7 +473,9 @@ def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | No
 
         # Check if root cause matches
         actual_rc = report.get("root_cause", "") if isinstance(report, dict) else ""
-        r["root_cause_match"] = _root_cause_matches(case["expected_root_cause"], actual_rc)
+        r["root_cause_match"] = _root_cause_matches(
+            case["expected_root_cause"], actual_rc, keywords=case.get("match_keywords")
+        )
 
         results.append(r)
         _print_report(report, elapsed, case, match=r["root_cause_match"])
