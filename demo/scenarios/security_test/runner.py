@@ -206,7 +206,7 @@ def _print_security_result(report: SecurityReport, case: dict[str, Any]) -> None
     else:
         match = "[PASS]" if not expected_blocked else "[FAIL] MISSED"
         print(f"\n  [PASS] SECURITY: PASSED {match}")
-        print(f"  类型:        {report.attack_type} (benign)")
+        print(f"  类型:        {report.attack_type}")
         print(f"  说明:        {report.reason}")
         print(f"  Trace ID:    {report.trace_id}")
 

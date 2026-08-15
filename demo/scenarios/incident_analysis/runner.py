@@ -228,13 +228,19 @@ class AnalyzeIncidentTool(BaseTool):
 
     @staticmethod
     def _analyze_by_rule(logs_text: str, metrics_text: str, symptom: str) -> dict[str, Any]:
-        """写死数据 + 规则匹配（无网络依赖的确定性降级路径）。"""
-        if "Connection pool exhausted" in logs_text or "OOM" in logs_text:
-            return _ROOT_CAUSE_MAP["Redis连接池耗尽"]
-        if "slow" in logs_text.lower() or "3200ms" in logs_text:
+        """写死数据 + 规则匹配（无网络依赖的确定性降级路径）。
+
+        症状信号优先（由用户请求派生，随用例变化），日志/指标关键字作为佐证。
+        注意：模拟日志内容对 order-api 是固定的，若日志关键字优先会永远命中
+        Redis 连接池耗尽，导致「慢查询」「缓存不一致」两个用例误诊。
+        """
+        symptom = symptom or ""
+        if "延迟" in symptom or "slow" in logs_text.lower() or "3200ms" in logs_text:
             return _ROOT_CAUSE_MAP["数据库慢查询"]
-        if "404" in symptom or "缓存" in logs_text:
+        if "缓存" in symptom or "404" in symptom or "缓存" in logs_text:
             return _ROOT_CAUSE_MAP["缓存不一致"]
+        if "500" in symptom or "Connection pool exhausted" in logs_text or "OOM" in logs_text:
+            return _ROOT_CAUSE_MAP["Redis连接池耗尽"]
         return _ROOT_CAUSE_MAP["Redis连接池耗尽"]  # default
 
     @staticmethod
@@ -419,12 +425,12 @@ def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | No
         r["root_cause_match"] = case["expected_root_cause"] in actual_rc or case["expected_root_cause"][:4] in actual_rc
 
         results.append(r)
-        _print_report(report, elapsed, case)
+        _print_report(report, elapsed, case, match=r["root_cause_match"])
 
     return {"scenario": "AI Incident Diagnosis", "results": results, "total": len(results)}
 
 
-def _print_report(report: dict[str, Any], elapsed_ms: float, case: dict[str, Any]) -> None:
+def _print_report(report: dict[str, Any], elapsed_ms: float, case: dict[str, Any], *, match: bool) -> None:
     if not isinstance(report, dict) or "error" in report:
         print(f"\n  [FAIL] Diagnosis failed: {report.get('error', 'Unknown')}")
         return
@@ -440,6 +446,7 @@ def _print_report(report: dict[str, Any], elapsed_ms: float, case: dict[str, Any
     print(f"  修复建议:   {report.get('suggestion', 'N/A')}")
     print(f"  {'─' * 50}")
     print(f"  预期根因:   {case['expected_root_cause']}")
+    print(f"  诊断判定:   {'正确' if match else '错误（与预期不符）'}")
     print(f"  耗时:       {elapsed_ms:.1f}ms")
     print(f"  Trace ID:   (collector snapshot available)")
 

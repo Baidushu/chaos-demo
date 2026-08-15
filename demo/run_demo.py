@@ -106,8 +106,9 @@ def _print_all_summary(results: dict) -> None:
     # Incident summary
     if "incident" in results:
         inc = results["incident"]
-        passed = sum(1 for r in inc["results"] if r["success"])
-        print(f"\n  [Report] Incident Diagnosis: {passed}/{inc['total']} cases passed")
+        # 「通过」= 诊断根因与预期一致（而非仅执行成功）
+        passed = sum(1 for r in inc["results"] if r.get("root_cause_match"))
+        print(f"\n  [Report] Incident Diagnosis: {passed}/{inc['total']} cases diagnosed correctly")
 
     # Security summary
     if "security" in results:

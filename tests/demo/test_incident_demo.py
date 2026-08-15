@@ -44,6 +44,7 @@ class TestIncidentDemo:
         assert "confidence" in report
         assert 0.0 <= report["confidence"] <= 1.0
         assert "Redis" in report["root_cause"]
+        assert r["root_cause_match"] is True
 
     def test_incident_002_diagnosis(self):
         """incident-002: 数据库慢查询诊断。"""
@@ -51,6 +52,7 @@ class TestIncidentDemo:
         r = result["results"][0]
         assert r["success"] is True
         assert "root_cause" in r["report"]
+        assert r["root_cause_match"] is True
         # The slow query scenario matches "Connection pool exhausted" pattern
         assert r["report"]["confidence"] > 0.5
 
@@ -60,6 +62,7 @@ class TestIncidentDemo:
         r = result["results"][0]
         assert r["success"] is True
         assert "root_cause" in r["report"]
+        assert r["root_cause_match"] is True
 
     def test_all_cases_run(self):
         """运行全部诊断用例。"""
@@ -69,6 +72,11 @@ class TestIncidentDemo:
         assert passed == 3
         for r in result["results"]:
             assert "problem" in r["report"] or "error" in r["report"]
+        # 关键断言：三个用例的根因判定必须全部与预期一致（防误诊回归）
+        assert all(r["root_cause_match"] for r in result["results"]), [
+            (r["case_id"], r["report"].get("root_cause"), r["expected_root_cause"])
+            for r in result["results"]
+        ]
 
     def test_report_structure(self):
         """验证输出报告结构符合规范。"""
