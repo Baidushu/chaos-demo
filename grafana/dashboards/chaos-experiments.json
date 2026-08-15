@@ -1,0 +1,116 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum by (job, fault_type) (increase(chaos_experiment_total[1h]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Experiments Created (1h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum by (job, fault_type) (chaos_active_experiment)",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Experiments",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum by (job, fault_type) (increase(chaos_experiment_success_total[1h]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (job, fault_type) (increase(chaos_experiment_failed_total[1h]))",
+          "refId": "B"
+        }
+      ],
+      "title": "Experiment Success / Failure (1h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job, fault_type) (rate(chaos_recovery_duration_seconds_bucket[10m])))",
+          "refId": "A"
+        }
+      ],
+      "title": "Chaos Recovery P95 (s)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "chaos-demo",
+    "chaos"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "title": "Chaos Experiments",
+  "uid": "chaos-demo-chaos-experiments",
+  "version": 1
+}

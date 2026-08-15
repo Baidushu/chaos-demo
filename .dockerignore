@@ -1,7 +1,51 @@
+# ── Python cache ────────────────────────────────────────────
 __pycache__/
-*.pyc
-.pytest_cache/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Test & CI ──────────────────────────────────────────────
 tests/
-*.md
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.prof
+
+# ── Git ────────────────────────────────────────────────────
 .git/
+.gitattributes
 .gitignore
+
+# ── IDE / Editor ───────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Virtual environments ───────────────────────────────────
+venv/
+.venv/
+env/
+.env.local
+.env.*.local
+
+# ── Docs & Reports ─────────────────────────────────────────
+*.md
+!README.md
+docs/
+reports/
+
+# ── Legacy Docker artifacts (keep for reference) ───────────
+# Dockerfile      — legacy Flask app
+# docker-compose.yml — legacy chaos-demo stack
+
+# ── Misc ───────────────────────────────────────────────────
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

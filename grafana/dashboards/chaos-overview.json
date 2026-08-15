@@ -34,7 +34,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (job) (rate(http_requests_total{endpoint=\"/order\"}[1m]))",
+          "expr": "sum by (job) (rate(http_requests_total{route=\"/order\"}[1m]))",
           "refId": "A"
         }
       ],
@@ -61,7 +61,7 @@
       "id": 2,
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(http_request_latency_seconds_bucket{endpoint=\"/order\"}[2m]))) * 1000",
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(http_request_duration_seconds_bucket{route=\"/order\"}[2m]))) * 1000",
           "refId": "A"
         }
       ],
