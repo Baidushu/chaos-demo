@@ -25,19 +25,122 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import socket
 import sys
+import urllib.request
 from pathlib import Path
 
-from llm_client import LLMClient
+from ai_platform.llm.config import GatewayConfig, load_gateway_config
+from ai_platform.llm.gateway import LLMGateway
+from ai_platform.llm.types import LLMError, LLMRequest
 
 REPORT_DIR = Path("reports")
 
 
-def get_client() -> LLMClient:
+class GatewayLLMClient:
+    def __init__(self) -> None:
+        self._config, self._backend = self._resolve_config()
+        self._gateway = LLMGateway(config=self._config)
+
+    @property
+    def backend(self) -> str:
+        return self._backend
+
+    @property
+    def model(self) -> str:
+        return self._config.model
+
+    def chat(self, prompt: str, system: str = "", max_tokens: int = 2000) -> str:
+        request = LLMRequest(
+            prompt=prompt,
+            system=system,
+            model=self._config.model,
+            provider=self._config.provider,
+            response_format="text",
+            timeout_sec=self._config.timeout_sec,
+            metadata={
+                "caller": "llm_assist",
+                "max_tokens": max_tokens,
+            },
+        )
+        try:
+            response = self._gateway.generate(request)
+            return response.content
+        except LLMError as exc:
+            raise RuntimeError(exc.message) from exc
+
+    def _resolve_config(self) -> tuple[GatewayConfig, str]:
+        explicit_provider = os.getenv("LLM_GATEWAY_PROVIDER", "").strip()
+        if explicit_provider:
+            config = load_gateway_config()
+            self._validate_config(config, backend_name=_legacy_backend_name(config.provider))
+            return config, _legacy_backend_name(config.provider)
+
+        backend = os.getenv("LLM_BACKEND", "auto").strip().lower()
+        api_key = os.getenv("LLM_API_KEY", "").strip()
+        if backend == "auto":
+            if _check_ollama_available():
+                config = load_gateway_config(provider="ollama_chat")
+                return config, "ollama"
+            if api_key:
+                config = load_gateway_config(provider="openai_compatible")
+                self._validate_config(config, backend_name="openai")
+                return config, "openai"
+            raise ValueError(
+                "No LLM backend available. Either:\n"
+                "  1. Start Ollama: ollama serve && ollama pull qwen2.5:7b\n"
+                "  2. Set LLM_API_KEY for cloud API (Qwen/DeepSeek)"
+            )
+
+        if backend == "ollama":
+            return load_gateway_config(provider="ollama_chat"), "ollama"
+        if backend == "openai":
+            config = load_gateway_config(provider="openai_compatible")
+            self._validate_config(config, backend_name="openai")
+            return config, "openai"
+
+        config = load_gateway_config(provider=backend)
+        self._validate_config(config, backend_name=_legacy_backend_name(config.provider))
+        return config, _legacy_backend_name(config.provider)
+
+    @staticmethod
+    def _validate_config(config: GatewayConfig, *, backend_name: str) -> None:
+        if config.provider == "openai_compatible" and not config.api_key:
+            raise ValueError(
+                "LLM_API_KEY is required for cloud backend. "
+                "Get a free key from https://dashscope.console.aliyun.com/ "
+                "or set LLM_BACKEND=ollama for local model."
+            )
+        if backend_name == "mock" and not config.model:
+            raise ValueError("LLM mock provider requires a model name")
+
+
+def _legacy_backend_name(provider_name: str) -> str:
+    if provider_name == "openai_compatible":
+        return "openai"
+    if provider_name.startswith("ollama"):
+        return "ollama"
+    return provider_name
+
+
+def _check_ollama_available() -> bool:
     try:
-        return LLMClient()
-    except ValueError as e:
+        endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434").rstrip("/")
+        req = urllib.request.Request(f"{endpoint}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return resp.getcode() == 200
+    except (OSError, RuntimeError, TimeoutError, socket.timeout):
+        return False
+    except Exception:
+        return False
+
+
+def get_client() -> GatewayLLMClient:
+    try:
+        return GatewayLLMClient()
+    except (ValueError, LLMError) as e:
         print(f"[llm_assist] ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -97,7 +200,7 @@ API 描述：
 输出格式：一个合法的 Python 文件内容，包含 imports 和多个 test_ 函数。"""
 
 
-def generate_tests(client: LLMClient) -> str:
+def generate_tests(client: GatewayLLMClient) -> str:
     print(f"[llm_assist] generating tests with {client.backend}/{client.model} ...")
     system = "你是测开专家，输出高质量的 pytest 测试代码。只输出 Python 代码，不要解释。"
     return client.chat(GENERATE_TESTS_PROMPT, system=system, max_tokens=3000)
@@ -148,7 +251,7 @@ def _report_type_from_path(path: Path, data: dict) -> str:
     return "unknown"
 
 
-def analyze_report(client: LLMClient, report_path: str) -> str:
+def analyze_report(client: GatewayLLMClient, report_path: str) -> str:
     path = Path(report_path)
     if not path.exists():
         print(f"[llm_assist] ERROR: report not found: {report_path}", file=sys.stderr)
@@ -182,7 +285,7 @@ def read_log_sample(path: Path, max_lines: int = 80, max_chars: int = 28000) -> 
 
 
 def analyze_logs(
-    client: LLMClient,
+    client: GatewayLLMClient,
     log_path: str,
     *,
     max_lines: int = 80,
@@ -211,7 +314,7 @@ def _truncate(text: str, max_chars: int) -> str:
 
 
 def explain_code(
-    client: LLMClient,
+    client: GatewayLLMClient,
     code_path: str,
     *,
     question: str | None = None,
@@ -236,7 +339,7 @@ def explain_code(
     return client.chat(prompt, system=system, max_tokens=2500)
 
 
-def complete_cases_jsonl(client: LLMClient, input_path: Path, n: int) -> str:
+def complete_cases_jsonl(client: GatewayLLMClient, input_path: Path, n: int) -> str:
     lines = [ln.strip() for ln in input_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     sample = lines[-8:] if len(lines) > 8 else lines
     existing_ids = []
@@ -270,7 +373,7 @@ id（新 id，不要用 case-001 等已占用形式）、category、input、expe
         return text
 
 
-def complete_cases_yaml(client: LLMClient, input_path: Path, n: int) -> str:
+def complete_cases_yaml(client: GatewayLLMClient, input_path: Path, n: int) -> str:
     head = input_path.read_text(encoding="utf-8", errors="replace")
     head = _truncate(head, 12000)
     print(f"[llm_assist] suggesting {n} YAML cases with {client.backend}/{client.model} ...")
@@ -286,7 +389,7 @@ def complete_cases_yaml(client: LLMClient, input_path: Path, n: int) -> str:
     return m.group(1).strip() + "\n" if m else text
 
 
-def contract_audit(client: LLMClient, contract_path: Path) -> str:
+def contract_audit(client: GatewayLLMClient, contract_path: Path) -> str:
     if not contract_path.is_file():
         print(f"[llm_assist] ERROR: contract file not found: {contract_path}", file=sys.stderr)
         sys.exit(1)
