@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Case 1: AI Incident Diagnosis — 故障分析助手演示。
+
+Usage:
+  python demo/scenarios/incident_analysis/runner.py
+  python demo/scenarios/incident_analysis/runner.py --case incident-001
+
+加载 case.json 中的故障场景, 通过 AI Platform 执行诊断流程,
+输出 IncidentReport。
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+# ── Add project root ────────────────────────────────────────────────
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from ai_platform.core import PlatformConfig, PlatformFactory, AIPlatformService
+from ai_platform.security.policy import SecurityPolicy
+from ai_platform.tools.base import BaseTool
+from ai_platform.tools.registry import ToolRegistry
+from ai_platform.tools.executor import ToolExecutor, ToolExecutionResult
+from ai_platform.workflow.node import BaseNode
+from ai_platform.workflow.engine import WorkflowEngine
+from ai_platform.agent.runtime import AgentRuntime
+from ai_platform.agent.state import AgentState
+from ai_platform.agent.context import AgentContext
+
+
+# ── Mock Tools (模拟: 日志分析, 指标查询, 根因分析) ────────────────
+
+_SIMULATED_LOGS = {
+    "order-api": [
+        "[ERROR] 2026-07-25T10:15:00Z Redis connection timeout after 5000ms",
+        "[ERROR] 2026-07-25T10:15:01Z Connection pool exhausted: max=100, active=100, waiting=45",
+        "[ERROR] 2026-07-25T10:15:02Z Unable to execute command: OOM command not allowed when used memory > 'maxmemory'",
+        "[WARN] 2026-07-25T10:14:00Z Redis memory usage at 95% — approaching maxmemory limit",
+        "[ERROR] 2026-07-25T10:15:03Z Request failed: upstream connect error",
+    ],
+    "mysql": [
+        "[SLOW] 2026-07-25T10:14:30Z Query took 3200ms: SELECT * FROM orders WHERE status='pending'",
+        "[ERROR] 2026-07-25T10:15:00Z Too many connections: max=200, current=200",
+    ]
+}
+
+_SIMULATED_METRICS = {
+    "order-api": {
+        "error_rate": 0.35,
+        "latency_p99_ms": 5200,
+        "latency_p50_ms": 450,
+        "qps": 1200,
+        "active_connections": 100,
+        "redis_memory_used_pct": 0.95,
+    }
+}
+
+_ROOT_CAUSE_MAP = {
+    "Redis连接池耗尽": {
+        "problem": "订单接口大量500错误，错误率35%，p99延迟从100ms飙升至5.2秒",
+        "root_cause": "Redis连接池耗尽 — 高并发下连接池max=100全部占满，导致新请求获取连接超时",
+        "evidence": [
+            "日志显示10:15:00起大量 'Connection pool exhausted: max=100, active=100'",
+            "Redis内存使用率达95%，触发OOM保护拒绝写入",
+            "前序告警: 10:14:00 Redis内存使用率95%未及时处理",
+            "p99延迟曲线在10:14:30开始陡升，与Redis内存告警时间吻合"
+        ],
+        "suggestion": "1. 紧急: 扩容Redis连接池max→200; 2. 清理过期key释放内存; 3. 增加maxmemory或启用LRU淘汰; 4. 长期: 增加Redis内存告警→自动扩容",
+        "confidence": 0.92
+    },
+    "数据库慢查询": {
+        "problem": "创建订单p99延迟从100ms涨到5秒",
+        "root_cause": "数据库慢查询 + 连接池饱和 — pending状态订单扫描SQL耗时3.2秒，耗尽连接池",
+        "evidence": [
+            "慢查询日志: SELECT * FROM orders WHERE status='pending' 耗时3200ms",
+            "MySQL连接池max=200全部占满",
+            "p99延迟从100ms爬升至5秒，与慢查询开始时间一致",
+            "slow_db故障注入在10:14:30触发"
+        ],
+        "suggestion": "1. 紧急: 为orders.status添加索引; 2. 限制查询范围添加LIMIT; 3. 增加MySQL连接池max→400; 4. 长期: 引入只读副本分离查询",
+        "confidence": 0.88
+    },
+    "缓存不一致": {
+        "problem": "订单查询返回404但实际存在",
+        "root_cause": "Redis缓存与数据库不一致 — 写入DB成功但Redis缓存更新失败，导致读到过期数据",
+        "evidence": [
+            "缓存key 'order:ORD-xxx' TTL为-1 (永不过期) 但数据已更新",
+            "数据库中存在该订单而Redis中TTL未刷新",
+            "故障注入drop模式导致缓存更新请求被丢弃",
+            "对比DB和Redis数据发现3条不一致记录"
+        ],
+        "suggestion": "1. 紧急: 手动刷新受影响订单缓存; 2. 启用Cache-Aside模式，DB写入成功后删除(非更新)缓存; 3. 增加缓存写入失败重试; 4. 长期: 引入CDC实时同步",
+        "confidence": 0.85
+    }
+}
+
+
+# ── Demo Tools ───────────────────────────────────────────────────────
+
+class QueryLogsTool(BaseTool):
+    name = "query_logs"
+    description = "查询服务日志，支持按时间范围和关键词筛选"
+    schema = {
+        "service": {"type": str, "required": True},
+        "time_range": {"type": str, "required": False},
+        "keyword": {"type": str, "required": False},
+    }
+
+    def execute(self, params: dict[str, Any], *, context: Any = None) -> ToolExecutionResult:
+        service = params.get("service", "order-api")
+        logs = _SIMULATED_LOGS.get(service, [])
+        keyword = params.get("keyword", "").lower()
+        if keyword:
+            logs = [l for l in logs if keyword in l.lower()]
+        return ToolExecutionResult(
+            tool=self.name, ok=True, result={"service": service, "logs": logs, "count": len(logs)},
+            attempts=[{"tool": self.name, "result": "ok"}],
+            metadata={"response_text": f"找到 {len(logs)} 条日志"}
+        )
+
+
+class QueryMetricsTool(BaseTool):
+    name = "query_metrics"
+    description = "查询服务指标，返回QPS/延迟/错误率等Prometheus数据"
+    schema = {
+        "service": {"type": str, "required": True},
+        "metric_names": {"type": list, "required": False},
+    }
+
+    def execute(self, params: dict[str, Any], *, context: Any = None) -> ToolExecutionResult:
+        service = params.get("service", "order-api")
+        metrics = _SIMULATED_METRICS.get(service, {})
+        return ToolExecutionResult(
+            tool=self.name, ok=True, result={"service": service, "metrics": metrics},
+            attempts=[{"tool": self.name, "result": "ok"}],
+            metadata={"response_text": f"服务 {service}: 错误率 {metrics.get('error_rate', 0):.0%}, p99={metrics.get('latency_p99_ms', 0)}ms"}
+        )
+
+
+class AnalyzeIncidentTool(BaseTool):
+    name = "analyze_incident"
+    description = "基于日志和指标数据做根因分析，返回IncidentReport"
+    schema = {
+        "logs_summary": {"type": str, "required": True},
+        "metrics_summary": {"type": str, "required": True},
+        "symptom": {"type": str, "required": False},
+    }
+
+    def execute(self, params: dict[str, Any], *, context: Any = None) -> ToolExecutionResult:
+        """匹配最可能的根因并返回报告。"""
+        logs_text = params.get("logs_summary", "")
+        metrics_text = params.get("metrics_summary", "")
+
+        # Simple matching logic
+        if "Connection pool exhausted" in logs_text or "OOM" in logs_text:
+            report = _ROOT_CAUSE_MAP["Redis连接池耗尽"]
+        elif "slow" in logs_text.lower() or "3200ms" in logs_text:
+            report = _ROOT_CAUSE_MAP["数据库慢查询"]
+        elif "404" in params.get("symptom", "") or "缓存" in logs_text:
+            report = _ROOT_CAUSE_MAP["缓存不一致"]
+        else:
+            report = _ROOT_CAUSE_MAP["Redis连接池耗尽"]  # default
+
+        return ToolExecutionResult(
+            tool=self.name, ok=True, result=report,
+            attempts=[{"tool": self.name, "result": "ok"}],
+            metadata={"response_text": f"根因分析完成, 置信度: {report['confidence']:.0%}"}
+        )
+
+
+# ── Workflow Node ────────────────────────────────────────────────────
+
+class IncidentDiagnosisNode(BaseNode):
+    """故障诊断工作流节点: 日志 → 指标 → 分析 → 报告"""
+    name = "incident_diagnosis"
+
+    def __init__(self, executor: ToolExecutor) -> None:
+        self._executor = executor
+
+    def execute(self, state: AgentState, context: AgentContext) -> AgentState:
+        request_text = state.request if isinstance(state.request, str) else str(state.request)
+
+        # Step 1: 查询日志
+        logs_result = self._executor.execute("query_logs", {"service": "order-api"})
+        if logs_result.ok:
+            state.add_tool_result(tool="query_logs", result=logs_result.result, metadata={"count": logs_result.result.get("count", 0)})
+
+        # Step 2: 查询指标
+        metrics_result = self._executor.execute("query_metrics", {"service": "order-api"})
+        if metrics_result.ok:
+            state.add_tool_result(tool="query_metrics", result=metrics_result.result)
+
+        # Step 3: 根因分析
+        logs_summary = str(logs_result.result.get("logs", [])[:3])
+        metrics_summary = str(metrics_result.result.get("metrics", {}))
+        symptom = "大量500错误" if "500" in request_text else ("延迟飙升" if "延迟" in request_text else "缓存不一致")
+        analysis = self._executor.execute("analyze_incident", {
+            "logs_summary": logs_summary,
+            "metrics_summary": metrics_summary,
+            "symptom": symptom,
+        })
+
+        if analysis.ok:
+            state.add_tool_result(tool="analyze_incident", result=analysis.result)
+            state.set_answer(analysis.result)
+            state.metadata["incident_report"] = analysis.result
+            state.metadata["diagnosis_complete"] = True
+
+        return state
+
+
+# ── Runner ───────────────────────────────────────────────────────────
+
+def build_platform_service() -> AIPlatformService:
+    """构建带诊断工具和节点的AI Platform服务。"""
+    config = PlatformConfig.default()
+    factory = PlatformFactory(config)
+
+    # 注册诊断工具
+    registry = ToolRegistry()
+    registry.register(QueryLogsTool())
+    registry.register(QueryMetricsTool())
+    registry.register(AnalyzeIncidentTool())
+
+    executor = ToolExecutor(registry=registry, security=config.security)
+
+    # 创建工作流
+    workflow = WorkflowEngine()
+    workflow.register(IncidentDiagnosisNode(executor))
+
+    runtime = AgentRuntime(
+        workflow=workflow,
+        security=config.security,
+        observability_enabled=True,
+    )
+
+    return AIPlatformService(agent_runtime=runtime, config=config)
+
+
+def run_incident_diagnosis(case_id: str | None = None) -> dict[str, Any]:
+    """运行故障诊断演示。"""
+    service = build_platform_service()
+
+    # 加载用例
+    cases_path = Path(__file__).parent / "case.json"
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))
+    inputs = cases["inputs"]
+
+    if case_id:
+        inputs = [c for c in inputs if c["id"] == case_id]
+        if not inputs:
+            print(f"ERROR: Case not found: {case_id}")
+            sys.exit(2)
+
+    results = []
+    for case in inputs:
+        print(f"\n{'='*60}")
+        print(f"  Case: {case['id']} | Severity: {case['severity']}")
+        print(f"  Input: {case['user_input']}")
+        print(f"{'='*60}")
+
+        start = time.perf_counter()
+        result = service.run(case["user_input"], mode="rule")
+        elapsed = (time.perf_counter() - start) * 1000
+
+        report: dict[str, Any]
+        if result.success and result.answer:
+            report = result.answer if isinstance(result.answer, dict) else {}
+        else:
+            report = {"error": result.error, "error_type": result.error_type}
+
+        r = {
+            "case_id": case["id"],
+            "user_input": case["user_input"],
+            "success": result.success,
+            "report": report,
+            "trace_id": result.trace_id,
+            "elapsed_ms": round(elapsed, 1),
+            "expected_root_cause": case["expected_root_cause"],
+            "expected_tools": case["expected_tools"],
+            "tools_called": [tr["tool"] for tr in getattr(service._runtime, "workflow", None) and hasattr(service, "_runtime") and []],
+        }
+
+        # Check if root cause matches
+        actual_rc = report.get("root_cause", "") if isinstance(report, dict) else ""
+        r["root_cause_match"] = case["expected_root_cause"] in actual_rc or case["expected_root_cause"][:4] in actual_rc
+
+        results.append(r)
+        _print_report(report, elapsed, case)
+
+    return {"scenario": "AI Incident Diagnosis", "results": results, "total": len(results)}
+
+
+def _print_report(report: dict[str, Any], elapsed_ms: float, case: dict[str, Any]) -> None:
+    if not isinstance(report, dict) or "error" in report:
+        print(f"\n  ❌ Diagnosis failed: {report.get('error', 'Unknown')}")
+        return
+
+    print(f"\n  📋 Incident Report")
+    print(f"  {'─' * 50}")
+    print(f"  故障现象:   {report.get('problem', 'N/A')}")
+    print(f"  根因:       {report.get('root_cause', 'N/A')}")
+    print(f"  置信度:     {report.get('confidence', 0):.0%}")
+    print(f"  证据:")
+    for evidence in report.get("evidence", []):
+        print(f"    • {evidence}")
+    print(f"  修复建议:   {report.get('suggestion', 'N/A')}")
+    print(f"  {'─' * 50}")
+    print(f"  预期根因:   {case['expected_root_cause']}")
+    print(f"  耗时:       {elapsed_ms:.1f}ms")
+    print(f"  Trace ID:   (collector snapshot available)")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="AI Incident Diagnosis Demo")
+    parser.add_argument("--case", type=str, default=None, help="Run specific case (e.g. incident-001)")
+    args = parser.parse_args()
+    run_incident_diagnosis(args.case)
