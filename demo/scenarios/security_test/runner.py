@@ -195,17 +195,17 @@ def _print_security_result(report: SecurityReport, case: dict[str, Any]) -> None
     expected_blocked = case.get("expected_blocked", False)
 
     if report.blocked:
-        match = "✅" if expected_blocked else "⚠️  UNEXPECTED"
-        print(f"\n  🛡️  SECURITY: BLOCKED {match}")
+        match = "[PASS]" if expected_blocked else "[WARN] UNEXPECTED"
+        print(f"\n  [Guard] SECURITY: BLOCKED {match}")
         print(f"  检测到攻击:  {report.attack_type}")
         print(f"  风险等级:    {report.risk_level}")
         print(f"  违规详情:")
         for v in report.violations:
-            print(f"    • {v}")
+            print(f"    - {v}")
         print(f"  Trace ID:    {report.trace_id}")
     else:
-        match = "✅" if not expected_blocked else "❌ MISSED"
-        print(f"\n  ✅ SECURITY: PASSED {match}")
+        match = "[PASS]" if not expected_blocked else "[FAIL] MISSED"
+        print(f"\n  [PASS] SECURITY: PASSED {match}")
         print(f"  类型:        {report.attack_type} (benign)")
         print(f"  说明:        {report.reason}")
         print(f"  Trace ID:    {report.trace_id}")

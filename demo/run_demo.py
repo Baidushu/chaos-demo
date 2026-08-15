@@ -65,16 +65,16 @@ Examples:
     results: dict[str, any] = {}
 
     if args.command in ("incident", "all"):
-        print("\n" + "█" * 60)
+        print("\n" + "=" * 60)
         print("  SCENARIO 1: AI Incident Diagnosis")
-        print("█" * 60)
+        print("=" * 60)
         from demo.scenarios.incident_analysis.runner import run_incident_diagnosis
         results["incident"] = run_incident_diagnosis(args.case if args.command == "incident" else None)
 
     if args.command in ("security", "all"):
-        print("\n" + "█" * 60)
+        print("\n" + "=" * 60)
         print("  SCENARIO 2: AI Security Testing")
-        print("█" * 60)
+        print("=" * 60)
         from demo.scenarios.security_test.runner import run_security_test
         sec_result = run_security_test(args.case if args.command == "security" else None)
         results["security"] = sec_result
@@ -84,9 +84,9 @@ Examples:
 
     if args.command in ("regression", "all"):
         mode = getattr(args, "mode", "fail") or "fail"
-        print("\n" + "█" * 60)
+        print("\n" + "=" * 60)
         print(f"  SCENARIO 3: AI Regression Quality Gate ({mode.upper()})")
-        print("█" * 60)
+        print("=" * 60)
         from demo.scenarios.regression.runner import run_regression_gate
         reg_result = run_regression_gate(mode)
         results["regression"] = reg_result
@@ -99,30 +99,30 @@ Examples:
 
 
 def _print_all_summary(results: dict) -> None:
-    print("\n" + "█" * 60)
+    print("\n" + "=" * 60)
     print("  ALL SCENARIOS COMPLETE — Summary")
-    print("█" * 60)
+    print("=" * 60)
 
     # Incident summary
     if "incident" in results:
         inc = results["incident"]
         passed = sum(1 for r in inc["results"] if r["success"])
-        print(f"\n  📋 Incident Diagnosis: {passed}/{inc['total']} cases passed")
+        print(f"\n  [Report] Incident Diagnosis: {passed}/{inc['total']} cases passed")
 
     # Security summary
     if "security" in results:
         sec = results["security"]
         s = sec.get("stats", {})
-        print(f"\n  🛡️  Security Testing: {s['blocked']}/{s['total']} attacks blocked")
+        print(f"\n  [Guard] Security Testing: {s['blocked']}/{s['total']} attacks blocked")
 
     # Regression summary
     if "regression" in results:
         reg = results["regression"]
-        print(f"\n  📊 Regression Gate: {reg['report']['gate_status']} "
+        print(f"\n  [Gate] Regression Gate: {reg['report']['gate_status']} "
               f"(baseline={reg['report']['baseline_score']}, "
               f"current={reg['report']['current_score']})")
 
-    print(f"\n{'█' * 60}\n")
+    print(f"\n{'=' * 60}\n")
 
 
 if __name__ == "__main__":

@@ -161,7 +161,7 @@ def run_regression_gate(scenario: str = "fail") -> dict[str, Any]:
 
     # 如果有评估用例，也展示对比
     if "evaluation_cases" in data:
-        print(f"\n  📋 Evaluation Cases ({len(data['evaluation_cases'])} cases)")
+        print(f"\n  [Cases] Evaluation Cases ({len(data['evaluation_cases'])} cases)")
         for ec in data["evaluation_cases"]:
             print(f"    {ec['id']}: {ec['input'][:50]}... → {ec['expected_tools']}")
 
@@ -179,9 +179,9 @@ def _print_regression_report(
     scenario: str,
 ) -> None:
     """打印回归报告。"""
-    gate_icon = "✅" if report.gate_status == "PASS" else "❌"
+    gate_icon = "[PASS]" if report.gate_status == "PASS" else "[FAIL]"
 
-    print(f"\n  📊 Regression Report")
+    print(f"\n  [Report] Regression Report")
     print(f"  {'─'*60}")
     print(f"  Metric                    Baseline       Candidate      Delta")
     print(f"  {'─'*60}")
@@ -224,16 +224,16 @@ def _print_regression_report(
     if report.reasons:
         print(f"\n  Failure Reasons:")
         for reason in report.reasons:
-            print(f"    • {reason}")
+            print(f"    - {reason}")
 
     print(f"  Elapsed:         {report.elapsed_ms:.1f}ms")
 
     # 总结
     if scenario == "fail":
-        print(f"\n  ⚠️  REGRESSION DETECTED: Candidate version degrades quality —")
+        print(f"\n  [WARN] REGRESSION DETECTED: Candidate version degrades quality —")
         print(f"     deployment should be BLOCKED until metrics are restored.")
     else:
-        print(f"\n  ✅ ALL CHECKS PASSED: Candidate version improves or maintains quality —")
+        print(f"\n  [PASS] ALL CHECKS PASSED: Candidate version improves or maintains quality —")
         print(f"     safe to deploy.")
 
 
