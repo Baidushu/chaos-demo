@@ -3,11 +3,19 @@ import json
 import os
 import random
 import re
+import sys
 import time
 import urllib.error
 from pathlib import Path
 from urllib import request
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ai_platform.llm.config import load_gateway_config
+from ai_platform.llm.gateway import LLMGateway
+from ai_platform.llm.types import LLMRequest
 from run_trace import (
     append_case_trace,
     default_trace_path,
@@ -25,6 +33,7 @@ DEFAULT_RAW_RESULT_PATH = REPORT_DIR / "agent_raw_latest.json"
 AGENT_MODE = os.getenv("AGENT_MODE", "rule")  # rule | ollama
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_TIMEOUT_SEC = float(os.getenv("LLM_GATEWAY_TIMEOUT_SEC", "8"))
 MAX_RETRY = int(os.getenv("AGENT_MAX_RETRY", "2"))
 ALLOWED_TOOLS = {"place_order", "query_order", "cancel_order", "ask_user", "workflow"}
 
@@ -65,6 +74,25 @@ def _ollama_llm_meta(raw: dict) -> dict:
     }
 
 
+def _planner_gateway_config():
+    endpoint = os.getenv("LLM_GATEWAY_ENDPOINT", "").strip() or OLLAMA_ENDPOINT
+    model = os.getenv("LLM_GATEWAY_MODEL", "").strip() or OLLAMA_MODEL
+    return load_gateway_config(
+        provider="ollama_generate",
+        endpoint=endpoint,
+        model=model,
+        timeout_sec=OLLAMA_TIMEOUT_SEC,
+    )
+
+
+def _planner_llm_meta_from_response(response) -> dict:
+    return {
+        "llm_prompt_tokens": response.prompt_tokens,
+        "llm_completion_tokens": response.completion_tokens,
+        "llm_total_tokens": response.total_tokens,
+    }
+
+
 def plan_with_ollama(text: str):
     suffix = os.getenv("AGENT_PROMPT_SUFFIX", "").strip()
     prompt = (
@@ -76,28 +104,36 @@ def plan_with_ollama(text: str):
     if suffix:
         prompt += f"补充说明（必须遵守）: {suffix}\n"
     prompt += f"用户输入: {text}"
-    payload = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}).encode("utf-8")
-    req = request.Request(OLLAMA_ENDPOINT, data=payload, method="POST")
-    req.add_header("Content-Type", "application/json")
-    with request.urlopen(req, timeout=8) as resp:
-        raw = json.loads(resp.read().decode("utf-8"))
-        meta = _ollama_llm_meta(raw)
-        body = raw.get("response", "").strip()
-        m = re.search(r"\{.*\}", body, re.DOTALL)
-        if not m:
-            return (
-                {"tool": "ask_user", "args": {"reason": "invalid planner output"}, "_planner_valid": False},
-                meta,
-            )
-        try:
-            plan = json.loads(m.group(0))
-            plan["_planner_valid"] = True
-            return plan, meta
-        except Exception:
-            return (
-                {"tool": "ask_user", "args": {"reason": "json parse fail"}, "_planner_valid": False},
-                meta,
-            )
+    config = _planner_gateway_config()
+    gateway = LLMGateway(config=config)
+    response = gateway.generate(
+        LLMRequest(
+            prompt=prompt,
+            system="",
+            provider="ollama_generate",
+            model=config.model,
+            response_format="text",
+            timeout_sec=config.timeout_sec,
+            metadata={"caller": "run_agent_eval.plan_with_ollama"},
+        )
+    )
+    meta = _planner_llm_meta_from_response(response)
+    body = response.content.strip()
+    m = re.search(r"\{.*\}", body, re.DOTALL)
+    if not m:
+        return (
+            {"tool": "ask_user", "args": {"reason": "invalid planner output"}, "_planner_valid": False},
+            meta,
+        )
+    try:
+        plan = json.loads(m.group(0))
+        plan["_planner_valid"] = True
+        return plan, meta
+    except Exception:
+        return (
+            {"tool": "ask_user", "args": {"reason": "json parse fail"}, "_planner_valid": False},
+            meta,
+        )
 
 
 def validate_plan(plan):

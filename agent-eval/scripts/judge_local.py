@@ -1,6 +1,14 @@
-import json
+import os
+import sys
 from pathlib import Path
-from urllib import request
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ai_platform.llm.config import load_gateway_config
+from ai_platform.llm.gateway import LLMGateway
+from ai_platform.llm.types import LLMRequest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,11 +107,32 @@ def load_judge_sampling_config():
     return enabled, rate
 
 
-def local_llm_judge(user_input: str, expected: str, actual: str):
+def load_judge_gateway_config():
     cfg = parse_simple_yaml(CFG_PATH)
     judge = cfg.get("judge", {})
-    endpoint = judge.get("endpoint", "http://localhost:11434/api/generate")
-    model = judge.get("model", "qwen2.5:7b")
+    if not isinstance(judge, dict):
+        judge = {}
+    endpoint = os.getenv("LLM_GATEWAY_ENDPOINT", "").strip() or judge.get(
+        "endpoint", "http://localhost:11434/api/generate"
+    )
+    model = os.getenv("LLM_GATEWAY_MODEL", "").strip() or judge.get("model", "qwen2.5:7b")
+    timeout_raw = os.getenv("LLM_GATEWAY_TIMEOUT_SEC", "").strip() or os.getenv(
+        "LLM_TIMEOUT_SEC", ""
+    ).strip()
+    try:
+        timeout_sec = float(timeout_raw) if timeout_raw else 8.0
+    except (TypeError, ValueError):
+        timeout_sec = 8.0
+    return load_gateway_config(
+        provider="ollama_generate",
+        endpoint=endpoint,
+        model=model,
+        timeout_sec=timeout_sec,
+    )
+
+
+def local_llm_judge(user_input: str, expected: str, actual: str):
+    config = load_judge_gateway_config()
     prompt = (
         "你是测试判官。比较用户输入、预期行为和实际输出。"
         "如果实际输出没有明显幻觉且满足预期，返回 PASS；否则返回 FAIL。\n"
@@ -112,13 +141,20 @@ def local_llm_judge(user_input: str, expected: str, actual: str):
         f"实际输出: {actual}\n"
         "只输出 PASS 或 FAIL。"
     )
-    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8")
-    req = request.Request(endpoint, data=payload, method="POST")
-    req.add_header("Content-Type", "application/json")
     try:
-        with request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            text = data.get("response", "").strip().upper()
-            return "PASS" if "PASS" in text else "FAIL"
+        gateway = LLMGateway(config=config)
+        response = gateway.generate(
+            LLMRequest(
+                prompt=prompt,
+                system="",
+                provider="ollama_generate",
+                model=config.model,
+                response_format="text",
+                timeout_sec=config.timeout_sec,
+                metadata={"caller": "judge_local.local_llm_judge"},
+            )
+        )
+        text = response.content.strip().upper()
+        return "PASS" if "PASS" in text else "FAIL"
     except Exception:
         return "UNKNOWN"
