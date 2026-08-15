@@ -8,6 +8,7 @@ env/
 
 # pytest
 .pytest_cache/
+.pytest-tmp/
 .coverage
 
 # Local / generated run artifacts
