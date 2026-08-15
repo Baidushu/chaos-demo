@@ -13,6 +13,20 @@ import app as app_module
 from chaos_service import fault_injection, rate_limiter
 from chaos_service.resilience import build_circuit_breaker
 
+try:  # ai_platform 为可选依赖时测试仍可收集
+    from ai_platform.llm.config import isolate_repo_env_for_tests
+except Exception:  # pragma: no cover - 依赖缺失时跳过隔离
+    isolate_repo_env_for_tests = None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_repo_env():
+    """隔离仓库根 .env：本地开发机的 LLM_GATEWAY_*（DeepSeek key 等）
+    不得污染断言 legacy 变量/YAML 默认值的测试。"""
+    if isolate_repo_env_for_tests is not None:
+        isolate_repo_env_for_tests()
+    yield
+
 
 class FakeRedis:
     def __init__(self, broken: bool = False):

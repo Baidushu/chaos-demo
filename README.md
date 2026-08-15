@@ -89,6 +89,7 @@ Tool 是动作层 — Agent 调用 Tool 查询数据、执行命令或调用外�
 - **`ToolRegistry`**：命名 Tool 容器，含重复注册检测
 - **`ToolExecutor`**：执行 Tool 并集成安全检查。每次执行记录 `ToolEvent`（参数、结果、耗时、成功/失败状态）
 - **内置演示 Tool**：`QueryLogsTool`、`QueryMetricsTool`、`AnalyzeIncidentTool` — 演示故障诊断工作流的编排链路；后端为内置模拟日志/指标数据（`_SIMULATED_LOGS`），用于跑通「工具调用 → 根因分析」的端到端流程，非真实线上诊断
+- **真 LLM 根因分析**：`AnalyzeIncidentTool` 支持 `use_llm` 开关，`INCIDENT_LLM_ENABLED=1` 或 `runner.py --llm` 时由真实大模型（.env 配置的 DeepSeek）生成结构化 IncidentReport；LLM 不可用或输出不合法时自动降级到内置规则匹配（`analysis_backend` 字段记录实际后端）
 
 ### 5. LLM Gateway
 
@@ -106,6 +107,18 @@ Tool 是动作层 — Agent 调用 Tool 查询数据、执行命令或调用外�
 - **`LLMRequest`/`LLMResponse`**：所有 Provider 统一的请求/响应类型
 - **Provider 切换**：配置驱动，支持单次请求覆盖
 - **错误分类**：`LLMError` 带有类型化错误分类（`provider_not_found`、`timeout`、`model_error`）和可重试标志
+
+**云端 LLM 接入（DeepSeek 等 OpenAI 兼容服务）**：在仓库根目录创建 `.env`（已 gitignore，绝不入库），参考 `.env.example` 中的 `LLM_GATEWAY_*` 配置块：
+
+```
+LLM_GATEWAY_PROVIDER=openai_compatible
+LLM_GATEWAY_ENDPOINT=https://api.deepseek.com
+LLM_GATEWAY_MODEL=deepseek-chat
+LLM_GATEWAY_API_KEY=sk-xxxx
+LLM_GATEWAY_TIMEOUT_SEC=60
+```
+
+`load_gateway_config` / `load_judge_gateway_config` 自动加载该文件（dotenv 语义：已设置的环境变量优先）。`AGENT_MODE=llm` 时 Agent 评估的 planner 与诊断 runner（`INCIDENT_LLM_ENABLED=1`）即走真实大模型。
 
 ### 6. Security Layer
 
@@ -133,6 +146,8 @@ InputValidator → PromptGuard → PermissionChecker → OutputChecker
 | `RegressionEvaluator` | 基线对比 | 每个指标的 delta 与阈值门禁 |
 
 **`EvaluationEngine`** 依次执行已注册的评估器，汇总结果到 `EvaluationResult`（success、score、metrics、details、errors、metadata），并记录 `EvaluationEvent` 追踪。
+
+**Agent 评估数据集**（`agent-eval/datasets/tool_eval.jsonl`）包含 56 条用例，覆盖 4 类场景：normal（正常下单/查询/取消）、ask_user（缺参数/意图不明）、workflow（多步骤组合，按文本语义顺序编排）、attack（SQL 注入、角色扮演、越狱、盲猜订单号、恶意附带指令等）。路由采用**确定性护栏 + LLM** 双层架构：攻击标记输入与「查询/取消意图但无订单号」输入直接走规则路由（安全路径不交给 LLM 随机决策），其余输入由 LLM planner 路由；参数完整性由 `validate_plan` 闸门兜底（必填参数缺失一律 ask_user）。
 
 **`QualityGate`** 强制执行 6 项可配置阈值：
 - `tool_selection_accuracy_min`（默认 0.70）
