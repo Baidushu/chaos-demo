@@ -88,7 +88,8 @@ Tool 是动作层 — Agent 调用 Tool 查询数据、执行命令或调用外�
 - **`BaseTool`**：抽象基类，包含 `name`、`description`、`schema`（基于 dict 的参数定义）和 `execute(params, context)` 方法
 - **`ToolRegistry`**：命名 Tool 容器，含重复注册检测
 - **`ToolExecutor`**：执行 Tool 并集成安全检查。每次执行记录 `ToolEvent`（参数、结果、耗时、成功/失败状态）
-- **内置演示 Tool**：`QueryLogsTool`、`QueryMetricsTool`、`AnalyzeIncidentTool` — 演示故障诊断工作流的编排链路；后端为内置模拟日志/指标数据（`_SIMULATED_LOGS`），用于跑通「工具调用 → 根因分析」的端到端流程，非真实线上诊断
+- **内置演示 Tool**：`QueryLogsTool`、`QueryMetricsTool`、`AnalyzeIncidentTool` — 演示故障诊断工作流的编排链路；默认后端为内置模拟日志/指标数据（`_SIMULATED_LOGS`/`_SIMULATED_METRICS`），保证离线与 CI 的确定性
+- **真实数据源（自动优先，不可用降级模拟）**：`QueryMetricsTool` 优先抓取 Chaos Service 的 `/metrics`（Prometheus 文本格式，解析直方图计算错误率/p50/p99），`QueryLogsTool` 优先读取流量录制 JSONL（`reports/traffic_record_latest.jsonl`）；真实源不可达时自动降级到模拟数据，报告中的 `log_source`/`metrics_source` 字段标注实际来源。环境变量：`CHAOS_SERVICE_URL`（默认 `http://127.0.0.1:5000`）、`CHAOS_LOG_FILE`（覆盖录制文件路径）
 - **真 LLM 根因分析**：`AnalyzeIncidentTool` 支持 `use_llm` 开关，`INCIDENT_LLM_ENABLED=1` 或 `runner.py --llm` 时由真实大模型（.env 配置的 DeepSeek）生成结构化 IncidentReport；LLM 不可用或输出不合法时自动降级到内置规则匹配（`analysis_backend` 字段记录实际后端）
 
 ### 5. LLM Gateway

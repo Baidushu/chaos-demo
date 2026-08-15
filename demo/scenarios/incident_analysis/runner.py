@@ -37,6 +37,12 @@ from ai_platform.workflow.engine import WorkflowEngine
 from ai_platform.agent.runtime import AgentRuntime
 from ai_platform.agent.state import AgentState
 from ai_platform.agent.context import AgentContext
+from demo.scenarios.incident_analysis.data_sources import fetch_metrics, read_recent_logs
+
+# 真实数据源配置（调用时读取，便于测试注入）：
+#   CHAOS_SERVICE_URL  Chaos Service 地址（默认 http://127.0.0.1:5000，取 /metrics）
+#   CHAOS_LOG_FILE     流量录制 JSONL 路径（默认 reports/traffic_record_latest.jsonl）
+_DEFAULT_LOG_FILE = _PROJECT_ROOT / "reports" / "traffic_record_latest.jsonl"
 
 # 读入仓库根 .env（含 LLM_GATEWAY_*，如 DeepSeek key）；已设环境变量优先
 load_env_file()
@@ -129,14 +135,24 @@ class QueryLogsTool(BaseTool):
 
     def execute(self, params: dict[str, Any], *, context: Any = None) -> ToolExecutionResult:
         service = params.get("service", "order-api")
-        logs = _SIMULATED_LOGS.get(service, [])
-        keyword = params.get("keyword", "").lower()
-        if keyword:
-            logs = [l for l in logs if keyword in l.lower()]
+        keyword = params.get("keyword", "").strip() or None
+        time_range = params.get("time_range", "").strip() or None
+
+        # 真实源优先：流量录制 JSONL（可用 CHAOS_LOG_FILE 覆盖）；不可用 → 模拟数据降级
+        log_file = Path(os.environ.get("CHAOS_LOG_FILE", "").strip() or _DEFAULT_LOG_FILE)
+        logs = read_recent_logs(log_file, limit=200, keyword=keyword, time_range=time_range)
+        if logs is None:
+            logs = _SIMULATED_LOGS.get(service, [])
+            if keyword:
+                logs = [l for l in logs if keyword.lower() in l.lower()]
+            source = "simulated"
+        else:
+            source = "traffic_record"
+
         return ToolExecutionResult(
             tool=self.name, ok=True, result={"service": service, "logs": logs, "count": len(logs)},
             attempts=[{"tool": self.name, "result": "ok"}],
-            metadata={"response_text": f"找到 {len(logs)} 条日志"}
+            metadata={"response_text": f"找到 {len(logs)} 条日志", "source": source}
         )
 
 
@@ -150,11 +166,23 @@ class QueryMetricsTool(BaseTool):
 
     def execute(self, params: dict[str, Any], *, context: Any = None) -> ToolExecutionResult:
         service = params.get("service", "order-api")
-        metrics = _SIMULATED_METRICS.get(service, {})
+
+        # 真实源优先：Chaos Service /metrics（可用 CHAOS_SERVICE_URL 覆盖）；不可用 → 模拟数据降级
+        base_url = os.environ.get("CHAOS_SERVICE_URL", "http://127.0.0.1:5000").strip()
+        metrics = fetch_metrics(base_url) if base_url else None
+        if metrics is None:
+            metrics = dict(_SIMULATED_METRICS.get(service, {}))
+            metrics["source"] = "simulated"
+
+        p99 = metrics.get("latency_p99_ms")
+        p99_text = f"{p99}ms" if p99 is not None else "N/A"
         return ToolExecutionResult(
             tool=self.name, ok=True, result={"service": service, "metrics": metrics},
             attempts=[{"tool": self.name, "result": "ok"}],
-            metadata={"response_text": f"服务 {service}: 错误率 {metrics.get('error_rate', 0):.0%}, p99={metrics.get('latency_p99_ms', 0)}ms"}
+            metadata={
+                "response_text": f"服务 {service}: 错误率 {metrics.get('error_rate', 0):.0%}, p99={p99_text}",
+                "source": metrics.get("source"),
+            }
         )
 
 
@@ -296,6 +324,9 @@ class IncidentDiagnosisNode(BaseNode):
         if analysis.ok:
             report = dict(analysis.result)
             report["analysis_backend"] = analysis.metadata.get("analysis_backend", "rule")
+            report["called_tools"] = [entry["tool"] for entry in state.tool_result] + ["analyze_incident"]
+            report["log_source"] = logs_result.metadata.get("source", "simulated")
+            report["metrics_source"] = metrics_result.metadata.get("source", "simulated")
             state.add_tool_result(tool="analyze_incident", result=report)
             state.set_answer(report)
             state.metadata["incident_report"] = report
@@ -380,7 +411,7 @@ def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | No
             "analysis_backend": report.get("analysis_backend", "rule") if isinstance(report, dict) else "unknown",
             "expected_root_cause": case["expected_root_cause"],
             "expected_tools": case["expected_tools"],
-            "tools_called": [tr["tool"] for tr in getattr(service._runtime, "workflow", None) and hasattr(service, "_runtime") and []],
+            "tools_called": report.get("called_tools", []) if isinstance(report, dict) else [],
         }
 
         # Check if root cause matches
@@ -395,17 +426,17 @@ def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | No
 
 def _print_report(report: dict[str, Any], elapsed_ms: float, case: dict[str, Any]) -> None:
     if not isinstance(report, dict) or "error" in report:
-        print(f"\n  ❌ Diagnosis failed: {report.get('error', 'Unknown')}")
+        print(f"\n  [FAIL] Diagnosis failed: {report.get('error', 'Unknown')}")
         return
 
-    print(f"\n  📋 Incident Report")
+    print(f"\n  [Report] Incident Report")
     print(f"  {'─' * 50}")
     print(f"  故障现象:   {report.get('problem', 'N/A')}")
     print(f"  根因:       {report.get('root_cause', 'N/A')}")
     print(f"  置信度:     {report.get('confidence', 0):.0%}")
     print(f"  证据:")
     for evidence in report.get("evidence", []):
-        print(f"    • {evidence}")
+        print(f"    - {evidence}")
     print(f"  修复建议:   {report.get('suggestion', 'N/A')}")
     print(f"  {'─' * 50}")
     print(f"  预期根因:   {case['expected_root_cause']}")
