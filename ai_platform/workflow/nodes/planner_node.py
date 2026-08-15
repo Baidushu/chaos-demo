@@ -49,11 +49,12 @@ class PlannerNode(BaseNode):
             "llm_total_tokens": None,
         }
 
-        if selected_mode == "ollama":
+        use_llm = selected_mode in ("ollama", "llm")
+        if use_llm:
             try:
                 plan, llm_meta = self._planner(text)
                 state.add_llm_call(
-                    provider="ollama_generate",
+                    provider=os.getenv("LLM_GATEWAY_PROVIDER", "ollama_generate"),
                     model=self._planner_model,
                     prompt=text,
                     metadata={
@@ -67,7 +68,7 @@ class PlannerNode(BaseNode):
         else:
             plan = self._rule_planner(text)
 
-        if selected_mode == "ollama":
+        if use_llm:
             before_valid = bool(plan.get("_planner_valid", True))
             plan = self._validator(plan)
             if not before_valid or not plan.get("_planner_valid", True):

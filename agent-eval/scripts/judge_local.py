@@ -6,9 +6,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ai_platform.llm.config import load_gateway_config
+from ai_platform.llm.config import (
+    load_env_file,
+    load_judge_gateway_config as _load_judge_gateway_config,
+)
 from ai_platform.llm.gateway import LLMGateway
 from ai_platform.llm.types import LLMRequest
+
+# 读入仓库根 .env（含 LLM_GATEWAY_*，如 DeepSeek key）；已设环境变量优先
+load_env_file()
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,27 +114,12 @@ def load_judge_sampling_config():
 
 
 def load_judge_gateway_config():
-    cfg = parse_simple_yaml(CFG_PATH)
-    judge = cfg.get("judge", {})
-    if not isinstance(judge, dict):
-        judge = {}
-    endpoint = os.getenv("LLM_GATEWAY_ENDPOINT", "").strip() or judge.get(
-        "endpoint", "http://localhost:11434/api/generate"
-    )
-    model = os.getenv("LLM_GATEWAY_MODEL", "").strip() or judge.get("model", "qwen2.5:7b")
-    timeout_raw = os.getenv("LLM_GATEWAY_TIMEOUT_SEC", "").strip() or os.getenv(
-        "LLM_TIMEOUT_SEC", ""
-    ).strip()
-    try:
-        timeout_sec = float(timeout_raw) if timeout_raw else 8.0
-    except (TypeError, ValueError):
-        timeout_sec = 8.0
-    return load_gateway_config(
-        provider="ollama_generate",
-        endpoint=endpoint,
-        model=model,
-        timeout_sec=timeout_sec,
-    )
+    """委派 ai_platform 版本：YAML + 环境变量 + 仓库根 .env 三层配置。
+
+    provider 由 LLM_GATEWAY_PROVIDER 决定（.env 里配 openai_compatible
+    即走 DeepSeek 等云端兼容 API），未配置时回退 YAML 的本地 Ollama。
+    """
+    return _load_judge_gateway_config()
 
 
 def local_llm_judge(user_input: str, expected: str, actual: str):
@@ -147,7 +138,7 @@ def local_llm_judge(user_input: str, expected: str, actual: str):
             LLMRequest(
                 prompt=prompt,
                 system="",
-                provider="ollama_generate",
+                provider=config.provider,  # 跟随配置（ollama_generate / openai_compatible / ...）
                 model=config.model,
                 response_format="text",
                 timeout_sec=config.timeout_sec,

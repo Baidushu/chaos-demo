@@ -12,6 +12,66 @@ DEFAULT_OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"
 DEFAULT_TIMEOUT_SEC = 120.0
 DEFAULT_JUDGE_CONFIG_PATH = Path("agent-eval/config/eval_config.yaml")
 
+# 仓库根目录的 .env（若存在，在 load_*_config 时自动读入）
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+_ENV_FILE_LOADED: set[str] = set()
+
+# 仓库根 .env 里由本模块读入的环境变量名（用于测试环境隔离）
+_ENV_MANAGED_KEYS = (
+    "LLM_GATEWAY_PROVIDER",
+    "LLM_GATEWAY_ENDPOINT",
+    "LLM_GATEWAY_API_KEY",
+    "LLM_GATEWAY_MODEL",
+    "LLM_GATEWAY_TIMEOUT_SEC",
+)
+
+
+def isolate_repo_env_for_tests() -> None:
+    """测试环境隔离：屏蔽仓库根 .env 注入的 LLM_GATEWAY_*。
+
+    本地开发机的仓库根 .env（真实 DeepSeek key）会污染测试进程的
+    os.environ，导致断言 legacy 变量/YAML 配置的测试失败。
+    把托管变量设为空字符串：dotenv 语义下"已设置的变量优先"，
+    _load_env_file 不会用 .env 的值覆盖空串，_first_non_empty 会
+    跳过空值回落到 legacy 变量/YAML 默认值——测试恢复确定性。
+    此函数供 tests/conftest.py 的 autouse fixture 调用，
+    CI（无 .env）调用时是无害的空操作。
+    """
+    for name in _ENV_MANAGED_KEYS:
+        os.environ[name] = ""
+    _ENV_FILE_LOADED.clear()
+
+
+def load_env_file(path: Path | None = None) -> None:
+    """公开入口：加载仓库根 .env（幂等，已设环境变量优先）。"""
+    _load_env_file(path or _ENV_FILE)
+
+
+def _load_env_file(path: Path) -> None:
+    """把 .env 读进 os.environ（dotenv 语义：只填充未设置的变量）。
+
+    已存在的环境变量优先（shell/CI 显式设置 > .env 文件），
+    文件不可读时静默跳过——离线/CI 场景依赖显式环境变量。
+    """
+    key = str(path)
+    if key in _ENV_FILE_LOADED:
+        return
+    _ENV_FILE_LOADED.add(key)
+    if not path.is_file():
+        return
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            name, _, value = line.partition("=")
+            name = name.strip()
+            value = value.strip().strip('"').strip("'")
+            if name and name not in os.environ:
+                os.environ[name] = value
+    except OSError:  # pragma: no cover - 环境异常时静默
+        pass
+
 
 @dataclass(slots=True)
 class GatewayConfig:
@@ -37,7 +97,7 @@ def _normalize_provider_name(provider: str | None) -> str:
 
     mapping = {
         "auto": "ollama_chat",
-        "ollama": "ollama_chat",
+        "ollama": "ollama_generate",  # 历史约定：本地 Ollama 走 /api/generate
         "openai": "openai_compatible",
         "openai_compatible": "openai_compatible",
         "ollama_chat": "ollama_chat",
@@ -68,6 +128,7 @@ def load_gateway_config(
     api_key: str | None = None,
     timeout_sec: float | None = None,
 ) -> GatewayConfig:
+    _load_env_file(_ENV_FILE)
     resolved_provider = _normalize_provider_name(
         _first_non_empty(provider, os.getenv("LLM_GATEWAY_PROVIDER"), _legacy_provider_from_env())
     )
@@ -139,6 +200,7 @@ def parse_simple_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_judge_gateway_config(path: Path | None = None) -> GatewayConfig:
+    _load_env_file(_ENV_FILE)
     config_path = path or DEFAULT_JUDGE_CONFIG_PATH
     judge_cfg: dict[str, Any] = {}
     if config_path.is_file():

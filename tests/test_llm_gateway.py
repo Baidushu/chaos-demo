@@ -78,6 +78,8 @@ def test_load_gateway_config_legacy_openai_env(monkeypatch):
 
 def test_load_judge_gateway_config_uses_eval_yaml():
     config = load_judge_gateway_config()
-    assert config.provider == "ollama_chat"
+    # YAML 里 provider: "ollama" 配 /api/generate 端点，归一化为 ollama_generate
+    # （旧映射曾误归一到 ollama_chat，导致 chat provider 对 generate 端点拼错 URL）
+    assert config.provider == "ollama_generate"
     assert config.model == "qwen2.5:7b"
     assert config.endpoint == "http://localhost:11434/api/generate"
