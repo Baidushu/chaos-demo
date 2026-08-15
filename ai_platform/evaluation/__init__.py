@@ -6,7 +6,7 @@ Directory-aligned sub-structure:
   judges/     — JudgeEvaluator (from evaluator.py)
   regression/ — RegressionEvaluator, compare_prompt_regression_scores (from evaluator.py)
   dataset/    — load_json, write_json, write_jsonl
-  report/     — score_agent_eval, evaluate_prompt_regression (from legacy_adapter.py)
+  report/     — score_agent_eval, evaluate_prompt_regression
 
 Files kept at package root:
   evaluator.py — BaseEvaluator, JudgeEvaluator, ScoreEvaluator, RegressionEvaluator

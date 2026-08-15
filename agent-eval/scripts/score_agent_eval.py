@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
-from ai_platform.evaluation.legacy_adapter import score_agent_eval as run_score_agent_eval
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ai_platform.evaluation.report import score_agent_eval as run_score_agent_eval
 from ai_platform.evaluation.metrics import arg_match, avg_or_none, percentile_or_none, tool_match
 
 SKIP_JUDGE = os.getenv("AGENT_EVAL_SKIP_JUDGE", "").lower() in ("1", "true", "yes")
