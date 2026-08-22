@@ -148,7 +148,7 @@ InputValidator → PromptGuard → PermissionChecker → OutputChecker
 
 **`EvaluationEngine`** 依次执行已注册的评估器，汇总结果到 `EvaluationResult`（success、score、metrics、details、errors、metadata），并记录 `EvaluationEvent` 追踪。
 
-**Agent 评估数据集**（`agent-eval/datasets/tool_eval.jsonl`）包含 56 条用例，覆盖 4 类场景：normal（正常下单/查询/取消）、ask_user（缺参数/意图不明）、workflow（多步骤组合，按文本语义顺序编排）、attack（SQL 注入、角色扮演、越狱、盲猜订单号、恶意附带指令等）。路由采用**确定性护栏 + LLM** 双层架构：攻击标记输入与「查询/取消意图但无订单号」输入直接走规则路由（安全路径不交给 LLM 随机决策），其余输入由 LLM planner 路由；参数完整性由 `validate_plan` 闸门兜底（必填参数缺失一律 ask_user）。
+**Agent 评估数据集**（`agent-eval/datasets/tool_eval.jsonl`）包含 78 条用例，覆盖多维场景：normal（正常下单/查询/取消）、ask_user（缺参数/意图不明）、workflow（多步骤组合）、attack（SQL 注入、角色扮演、越狱、盲猜订单号、恶意附带指令）、context（上下文防捏造）、permission（角色工具权限边界，联动 `config/security_policy.yaml` 的 role 裁决）。路由采用**确定性护栏 + LLM** 双层架构：攻击标记输入与「查询/取消意图但无订单号」输入直接走规则路由（安全路径不交给 LLM 随机决策），其余输入由 LLM planner 路由；参数完整性由 `validate_plan` 闸门兜底（必填参数缺失一律 ask_user）。
 
 **`QualityGate`** 强制执行 6 项可配置阈值：
 - `tool_selection_accuracy_min`（默认 0.70）
@@ -188,7 +188,7 @@ Chaos Service 为韧性和质量测试提供真实目标：
 
 ### 测试
 
-**当前实测规模**：63 个测试文件 / 656 个收集用例，全量 `654 passed + 2 skipped`（2 个跳过是「需要真 Redis」的集成用例，起 Redis 后自动执行）。冒烟层 5 个用例，2.7 秒跑完。
+**当前实测规模**：70 个测试文件 / 722 个收集用例，全量 `720 passed + 2 skipped`（2 个跳过是「需要真 Redis」的集成用例，起 Redis 后自动执行），约 57 秒。冒烟层 5 个用例，约 3 秒。测试光谱：场景式单测/集成 → hypothesis 状态机属性测试（`tests/unit/*_stateful.py`）→ schemathesis 契约 fuzz（`tests/contract/`）→ mutmut 变异测试（夜间 CI）。
 
 ```powershell
 # 全量测试（Windows 本地若提示 Temp 目录拒绝访问，见「Windows 注意事项」）
@@ -209,7 +209,7 @@ python demo/run_demo.py all
 python -m pytest tests/demo/ -q
 ```
 
-**测试分布**（63 个测试文件）：
+**测试分布**（70 个测试文件）：
 
 | 层级 | 目录 | 文件数 | 关注点 |
 |---|---|---|---|
@@ -221,15 +221,16 @@ python -m pytest tests/demo/ -q
 | 端到端 | `tests/e2e/` | 2 | 全栈、性能回归 |
 | 部署 | `tests/deployment/` | 1 | Docker 配置验证 |
 
-**测试实践**：基于 pytest fixture 的组件准备、手写 FakeRedis/FailingRedis（内存 Redis + Lua 模拟 + 故障注入，测试无需真 Redis）、Mock LLM Provider 保证确定性测试、smoke 标记用于 CI 快速反馈、参数化测试覆盖边界情况、`monkeypatch` 进行环境隔离。
+**测试实践**：基于 pytest fixture 的组件准备、手写 FakeRedis/FailingRedis（内存 Redis + Lua 模拟 + 故障注入，测试无需真 Redis）、Mock LLM Provider 保证确定性测试、smoke 标记用于 CI 快速反馈、参数化测试覆盖边界情况、`monkeypatch` 进行环境隔离、hypothesis 状态机属性测试锁状态机不变量、schemathesis 契约 fuzz 负向生成（曾发现 item_id 传 list 穿透校验等真实缺陷）。
 
 ### CI/CD
 
-三个 GitHub Actions 工作流：
+四个 GitHub Actions 工作流：
 
 - **`ci.yml`**：代码质量（lint、类型检查）+ 单元/集成测试 + Docker 构建
 - **`ai-quality.yml`**：AI 评估门禁 — 在每个 PR 上运行完整评估流水线，Quality Gate 未通过则阻塞合并
 - **`qa.yml`**：安全扫描 + 基准对比 + 回归检测
+- **`supply-chain.yml`**：供应链安全（pip-audit / CycloneDX SBOM / Trivy）+ 变异测试（mutmut，夜间）
 
 ### 可观测性
 
@@ -261,7 +262,7 @@ python --version                  # Python 3.14.3
 
 ```powershell
 python -m pytest tests/ -q -m smoke                     # 冒烟 5 个，约 3 秒
-python -m pytest tests/ -q                              # 全量 654 passed + 2 skipped，约 45 秒
+python -m pytest tests/ -q                              # 全量 720 passed + 2 skipped，约 57 秒
 python -m pytest tests/unit/test_circuit_breaker.py -v  # 单文件，看熔断器状态机逐条执行
 ```
 
@@ -365,7 +366,7 @@ docker compose down              # 停止并清理
 
 ```powershell
 $env:AGENT_MODE="rule"                 # 规则规划器（离线、确定、零成本）
-python agent-eval/scripts/run_agent_eval.py      # 对 56 条数据集执行 Agent
+python agent-eval/scripts/run_agent_eval.py      # 对 78 条数据集执行 Agent
 python agent-eval/scripts/score_agent_eval.py    # 打分
 python agent-eval/scripts/gate_agent_eval.py     # 门禁 PASS/FAIL
 ```
@@ -404,7 +405,7 @@ python agent-eval/scripts/gate_agent_eval.py     # 门禁 PASS/FAIL
 - **AI 回归测试**：创建基线-vs-候选对比系统，在 Prompt 或模型变更时检测逐指标退化，支持 AI 功能的安全持续部署
 - **安全测试自动化**：实现 4 层安全防护，包含 22 种注入检测模式，以及自动化安全扫描，通过对响应体进行上下文感知的严重级别分类来分析 SQLi 信号
 - **AI 诊断真实数据链路**：诊断工具自动优先接入 Chaos Service 真实数据源（Prometheus /metrics + 流量录制 JSONL），不可用时降级模拟数据，报告标注实际来源
-- **全栈测试架构**：63 个测试文件 / 656 个用例覆盖单元、集成、E2E、演示和部署层 — 按测试类型组织，配合 smoke 标记实现 CI 快速反馈；手写 FakeRedis 实现无外部依赖的确定性测试
+- **全栈测试架构**：70 个测试文件 / 722 个用例覆盖单元、集成、E2E、演示、契约 fuzz 和部署层 — 按测试类型组织，配合 smoke 标记实现 CI 快速反馈；手写 FakeRedis 实现无外部依赖的确定性测试
 - **CI/CD 质量门禁**：3 个 GitHub Actions 工作流，其中一个 AI 专属质量门禁在评估阈值被违反时阻塞 PR
 - **可观测性驱动测试**：自定义 Trace/Span/Event 收集器，带类型化事件层次结构 — 每次 AI 请求生成完整、可查询的执行记录，用于调试和审计
 
