@@ -1,0 +1,40 @@
+# =====================================================================
+# 声明式混沌实验定义（Chaos Toolkit 风格）
+# ---------------------------------------------------------------------
+# 运行：python agent-eval/scripts/run_experiment.py
+#       （默认加载本文件；schema 严格校验，未知键 fail-fast）
+# 结构 = 稳态假设(steady_state) + 实验方法(method) + 容忍上界(tolerance)
+#         + 回滚策略(rollback)。verdict = 稳态成立 且 对照增量在容忍内。
+# 与 chaos_compare.py --strict 的关系：本文件是该流程的声明式版本——
+# 参数与阈值单一来源在此，CI 仍可直接跑 chaos_compare（默认值一致）。
+# =====================================================================
+
+version: 1
+name: mixed-fault-tool-stability
+description: 混合故障（45% 失败 + 180ms 延迟）下工具调用稳定性对照实验
+
+# 稳态假设：无故障基线必须满足的质量底线（不成立 = 实验前提被破坏，直接判 FAIL）
+steady_state:
+  tool_selection_accuracy_min: 0.95
+  arg_accuracy_min: 0.95
+  retry_rate_max: 0.05
+
+# 实验方法：故障轮的注入参数（基线轮固定无故障）
+# mode=rule：确定性规则 planner（与 CI 一致）；显式声明可防止本地 .env 的
+# AGENT_MODE=llm 泄漏进实验——曾导致离线实验静默调用真实 LLM（DeepSeek）
+method:
+  mode: rule
+  experiment:
+    chaos: mixed
+    fail_rate: 0.45
+    latency_ms: 180
+
+# 容忍上界：故障轮相对基线的增量门禁（token 黑洞 / 重试放大）
+tolerance:
+  token_surge_max: 0.30
+  retry_surge_max: 0.25
+  fail_path_token_surge_max: 0.50
+
+# 回滚策略：故障经 /fault/* 注入时带 TTL 自动过期（防实验残留）
+rollback:
+  fault_ttl_sec: 60

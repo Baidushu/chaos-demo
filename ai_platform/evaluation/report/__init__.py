@@ -135,7 +135,56 @@ def _build_score_markdown(report: dict[str, Any], review_pool: list[dict[str, An
         f"- judge_pass_rate: {judge_pass_rate_text}",
         f"- manual_review_pool_size: {len(review_pool)}",
     ]
+    lines.extend(_build_dimension_matrix_lines(report))
     return "\n".join(lines)
+
+
+def _build_dimension_matrix_lines(report: dict[str, Any]) -> list[str]:
+    """四维回归矩阵：工具选择 / 上下文 / 权限边界 / 安全边界。"""
+    breakdown = report.get("dimension_breakdown") or {}
+    if not breakdown:
+        return []
+
+    def pct(value):
+        return "N/A" if value is None else f"{value:.2%}"
+
+    dimension_names = {
+        "tool_selection": "工具选择",
+        "context": "上下文（防捏造）",
+        "permission": "权限边界",
+        "security": "安全边界",
+    }
+    lines = [
+        "",
+        "## Dimension matrix（四维回归矩阵）",
+        "",
+        "| 维度 | 用例数 | tool_acc | arg_acc | task_success | 额外指标 |",
+        "|---|---:|---:|---:|---:|---|",
+    ]
+    for dim in ("tool_selection", "context", "permission", "security"):
+        stats = breakdown.get(dim)
+        if not stats:
+            continue
+        extra = ""
+        if dim == "permission":
+            extra = f"denial_acc={pct(stats.get('permission_denial_accuracy'))}"
+        lines.append(
+            f"| {dimension_names.get(dim, dim)} | {stats.get('cases', 0)} "
+            f"| {pct(stats.get('tool_selection_accuracy'))} "
+            f"| {pct(stats.get('arg_accuracy'))} "
+            f"| {pct(stats.get('task_success_rate'))} "
+            f"| {extra} |"
+        )
+    permission_accuracy = report.get("permission_denial_accuracy")
+    if permission_accuracy is not None:
+        lines.extend(
+            [
+                "",
+                f"- permission_denial_accuracy: {permission_accuracy:.2%} "
+                f"(n={report.get('permission_case_count', 0)})",
+            ]
+        )
+    return lines
 
 
 def _build_prompt_regression_markdown(doc: dict[str, Any]) -> str:

@@ -1,0 +1,127 @@
+name: supply-chain
+
+# 供应链安全 + 变异测试（DevSecOps 辅线）
+# - dependency-audit / sbom / trivy：每次 push/PR 跑，发现高危即失败
+# - mutation-testing：仅夜间与手动触发（耗时数分钟），产物为 mutation score 报告
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "0 19 * * *" # 每日 03:00 GMT+8
+  workflow_dispatch:
+
+jobs:
+  dependency-audit:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Audit runtime dependencies (requirements + requirements-ai)
+        run: pip-audit -r requirements.txt -r requirements-ai.txt --desc on
+
+      - name: Audit dev dependencies
+        run: pip-audit -r requirements-dev.txt
+
+  sbom:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies + cyclonedx
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-ai.txt
+          pip install cyclonedx-bom
+
+      - name: Generate CycloneDX SBOM (runtime)
+        run: >
+          cyclonedx-py environment
+          -o reports/sbom_runtime.json
+          --output-format JSON
+          --validate
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: reports/sbom_runtime.json
+
+  trivy-scan:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan (vuln + secret)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          # tests/ 里的哨兵密钥（sk-BOUNDARY-TEST-* 等）是密钥边界回归的
+          # 测试夹具，非真实泄漏；.venv 为本地虚拟环境不入库。
+          skip-dirs: tests,.venv,mutants
+
+  mutation-testing:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install mutmut
+
+      - name: Run mutation tests (resilience core)
+        run: |
+          mutmut run
+          mutmut results | tee reports/mutmut_results.txt || true
+          mutmut junitxml > reports/mutmut_report.xml || true
+
+      - name: Mutation score summary
+        run: |
+          echo "## Mutation testing summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          mutmut results >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: |
+            reports/mutmut_results.txt
+            reports/mutmut_report.xml

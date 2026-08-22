@@ -16,6 +16,8 @@ if str(REPO_ROOT) not in sys.path:
 from ai_platform.llm.config import load_gateway_config, load_env_file
 from ai_platform.llm.gateway import LLMGateway
 from ai_platform.llm.types import LLMRequest
+from ai_platform.security.permission import PermissionChecker
+from ai_platform.security.policy_file import DEFAULT_POLICY_PATH, PolicyFileError, load_policy_file
 
 # 读入仓库根 .env（含 LLM_GATEWAY_*，如 DeepSeek key）；已设环境变量优先
 load_env_file()
@@ -50,6 +52,24 @@ def _env_float(name: str, default: float) -> float:
 OLLAMA_TIMEOUT_SEC = _env_float("LLM_GATEWAY_TIMEOUT_SEC", 8.0)
 MAX_RETRY = int(os.getenv("AGENT_MAX_RETRY", "2") or "2")
 ALLOWED_TOOLS = {"place_order", "query_order", "cancel_order", "ask_user", "workflow"}
+
+# 权限层（policy-as-code）：加载 config/security_policy.yaml 的角色工具权限。
+# 数据集 case 带 "role" 字段时按角色裁决；文件缺失时退化为无权限检查
+# （保持无策略部署的旧行为）。加载失败 fail-fast——权限配置坏了不能静默跑。
+_permission_checker: PermissionChecker | None = None
+_permission_checker_loaded = False
+
+
+def _get_permission_checker() -> PermissionChecker | None:
+    global _permission_checker, _permission_checker_loaded
+    if not _permission_checker_loaded:
+        _permission_checker_loaded = True
+        if DEFAULT_POLICY_PATH.is_file():
+            try:
+                _permission_checker = PermissionChecker(load_policy_file(DEFAULT_POLICY_PATH))
+            except PolicyFileError as exc:
+                raise SystemExit(f"invalid security policy file {DEFAULT_POLICY_PATH}: {exc}")
+    return _permission_checker
 
 # 攻击面确定性兜底：注入/越权/角色扮演类输入不交给 LLM 随机判断，
 # 直接走确定性规则引擎（规则对 DROP/9999999/别猜id 等有专门分支）
@@ -295,6 +315,9 @@ def execute_plan(case, client: ToolsClient):
     final_response = "已处理。"
     tool_results = []
     planner_fallback = False
+    permission_denied_tools: list[str] = []
+    role = str(case.get("role", "") or "").strip() or None
+    checker = _get_permission_checker() if role else None
     llm_meta = {
         "llm_prompt_tokens": None,
         "llm_completion_tokens": None,
@@ -331,6 +354,23 @@ def execute_plan(case, client: ToolsClient):
         args = step.get("args", {})
         called_tools.append(tool)
         called_args.update(args)
+        # 权限边界：带角色的 case 在执行前按策略裁决，被拒工具不落地下发
+        if checker is not None and tool != "ask_user":
+            permission_result = checker.check(tool, role=role)
+            if not permission_result.passed:
+                permission_denied_tools.append(tool)
+                tool_results.append(
+                    {
+                        "tool": tool,
+                        "result": {
+                            "ok": False,
+                            "permission_denied": True,
+                            "reason": (permission_result.violations or ["unknown"])[0],
+                        },
+                    }
+                )
+                final_response = "权限不足，操作被拒绝。"
+                continue
         if tool == "place_order":
             quantity = int(args.get("quantity", 1))
             res = client.place_order(
@@ -394,6 +434,8 @@ def execute_plan(case, client: ToolsClient):
         "called_args": called_args,
         "retry_count": retry_count,
         "tool_calls_count": len(called_tools),
+        "role": role,
+        "permission_denied_tools": permission_denied_tools,
         "token_usage": token_usage,
         "token_usage_estimated": token_usage_estimated,
         "token_usage_llm": llm_total,
@@ -491,6 +533,8 @@ def main():
             "expected_tools": case.get("expected_tools", []),
             "expected_args": case.get("expected_args", {}),
             "forbidden_behavior": case.get("forbidden_behavior", []),
+            "role": case.get("role", ""),
+            "expect_permission_denied": case.get("expect_permission_denied", []),
             **out,
             "timestamp": int(time.time()),
         }

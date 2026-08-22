@@ -4,6 +4,9 @@ Supports:
   - allowlist: only these tools are allowed
   - blocklist: these tools are explicitly blocked
   - allow-all: empty allowlist means all tools are allowed (unless blocked)
+  - role-based checks (policy-as-code): each call may carry a role name;
+    the effective permission = 全局约束 ∩ 角色约束, unknown roles are
+    rejected fail-closed（宁拒勿漏）.
 """
 
 from __future__ import annotations
@@ -16,29 +19,54 @@ class PermissionChecker:
     def __init__(self, policy: SecurityPolicy) -> None:
         self._policy = policy
 
-    def check(self, tool_name: str) -> SecurityResult:
+    def check(self, tool_name: str, role: str | None = None) -> SecurityResult:
         if not self._policy.security_enabled or not self._policy.tool_permission_enabled:
             return SecurityResult.pass_(check_name="permission_checker")
 
-        violations: list[str] = []
+        # 角色解析：显式传入优先，未传时回落 default_role（若配置）。
+        effective_role = role if role is not None else (self._policy.default_role or None)
+
+        blocked: set[str] = set(self._policy.blocked_tools)
+        global_allowed = list(self._policy.allowed_tools)
+
+        if effective_role is not None:
+            tool_role = self._policy.roles.get(effective_role)
+            if tool_role is None:
+                # fail-closed：未知角色一律拒绝——权限系统宁拒勿漏。
+                return SecurityResult.block(
+                    risk_level="high",
+                    violations=[f"unknown_role: {effective_role}"],
+                    check_name="permission_checker",
+                    metadata={
+                        "tool_name": tool_name,
+                        "role": effective_role,
+                        "reason": "fail_closed_unknown_role",
+                    },
+                )
+            blocked |= set(tool_role.blocked_tools)
+            if tool_role.allowed_tools:
+                if global_allowed:
+                    # 全局与角色允许集取交集
+                    role_set = set(tool_role.allowed_tools)
+                    global_allowed = [t for t in global_allowed if t in role_set]
+                else:
+                    global_allowed = list(tool_role.allowed_tools)
 
         # Blocklist check (higher priority)
-        if tool_name in self._policy.blocked_tools:
-            violations.append(f"tool_blocked: {tool_name}")
+        if tool_name in blocked:
             return SecurityResult.block(
                 risk_level="high",
-                violations=violations,
+                violations=[f"tool_blocked: {tool_name}"],
                 check_name="permission_checker",
                 metadata={"tool_name": tool_name, "reason": "blocklisted"},
             )
 
         # Allowlist check
-        allowed = self._policy.allowed_tools
+        allowed = global_allowed
         if allowed and tool_name not in allowed:
-            violations.append(f"tool_not_allowed: {tool_name}")
             return SecurityResult.block(
                 risk_level="high",
-                violations=violations,
+                violations=[f"tool_not_allowed: {tool_name}"],
                 check_name="permission_checker",
                 metadata={
                     "tool_name": tool_name,

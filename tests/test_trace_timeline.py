@@ -1,6 +1,8 @@
 """trace_timeline：Mermaid 生成与路径解析（无系统临时目录）。"""
 
 import json
+import shutil
+import sys
 from pathlib import Path
 
 import trace_timeline as tt
@@ -47,26 +49,34 @@ def test_build_mermaid_prefixes_avoid_id_collision():
     assert "blb0s0" in m_bl and "chb0s0" in m_ch
 
 
-def test_dual_mode_two_mermaid_pres_in_html(monkeypatch):
-    import sys
+def test_dual_mode_two_mermaid_pres_in_html(monkeypatch, tmp_path):
+    """输入与产物全部落在 pytest tmp_path（隔离 + 框架自动清理）。
 
+    main() 的 meta 计算用 OUT.relative_to(ROOT)、输入 fixture 里的
+    trace 路径是相对 ROOT 的——因此把 ROOT 一并指向 tmp_path，并把
+    只读输入按原相对结构复制进去，做到对仓库零写入。
+    （历史版本写共享的 tests/fixtures/_gen_dual/ 并手动 unlink，
+    Windows 文件锁会打断 unlink 且残留毒化后续运行。）
+    """
     monkeypatch.delenv("TRACE_TIMELINE_INPUT", raising=False)
-    gen = _FIX / "_gen_dual"
-    gen.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(tt, "ROOT", tmp_path)
+
+    fix_in_tmp = tmp_path / "tests" / "fixtures" / "trace_timeline"
+    fix_in_tmp.mkdir(parents=True)
+    for name in ("trace_baseline.json", "trace_chaos.json", "chaos_compare_for_dual.json"):
+        shutil.copyfile(_FIX / name, fix_in_tmp / name)
+
+    gen = tmp_path / "out"
+    gen.mkdir(parents=True)
     monkeypatch.setattr(tt, "OUT_DIR", gen)
     monkeypatch.setattr(tt, "OUT_MMD", gen / "trace_timeline_latest.mmd")
     monkeypatch.setattr(tt, "OUT_HTML", gen / "trace_timeline_latest.html")
-    monkeypatch.setattr(tt, "CHAOS_COMPARE_JSON", _FIX / "chaos_compare_for_dual.json")
+    monkeypatch.setattr(tt, "CHAOS_COMPARE_JSON", fix_in_tmp / "chaos_compare_for_dual.json")
     monkeypatch.setattr(sys, "argv", ["trace_timeline.py"])
-    try:
-        tt.main()
-        html = (gen / "trace_timeline_latest.html").read_text(encoding="utf-8")
-        assert html.count('<pre class="mermaid">') == 2
-        assert "Baseline" in html and "Chaos" in html
-        meta = json.loads((gen / "trace_timeline_meta.json").read_text(encoding="utf-8"))
-        assert meta.get("mode") == "dual"
-    finally:
-        for name in ("trace_timeline_latest.mmd", "trace_timeline_latest.html", "trace_timeline_meta.json"):
-            p = gen / name
-            if p.exists():
-                p.unlink()
+
+    tt.main()
+    html = (gen / "trace_timeline_latest.html").read_text(encoding="utf-8")
+    assert html.count('<pre class="mermaid">') == 2
+    assert "Baseline" in html and "Chaos" in html
+    meta = json.loads((gen / "trace_timeline_meta.json").read_text(encoding="utf-8"))
+    assert meta.get("mode") == "dual"

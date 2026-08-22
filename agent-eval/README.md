@@ -2,15 +2,25 @@
 
 > **主线叙事**：本目录是 **quality engineering 仓库里的扩展模块**，用于评估在**不稳定环境下**「按规划调用 HTTP 工具（下单/查询等）」的稳定性（重试、失败率、启发式 token 等），**不要**把整个 `chaos-demo` 讲成「AI Agent 项目」。技术事实与 CI 步骤仍以 [`../docs/AI_PROJECT_CONTEXT.md`](../docs/AI_PROJECT_CONTEXT.md) **§8** 为准；[`../docs/plan/AGENT_EVAL_PLAN.md`](../docs/plan/AGENT_EVAL_PLAN.md) 保留长期愿景与诚实边界（§2）。
 
-面向工具调用路径的**本地低成本**评测（**个人 demo 量级**：`tool_eval.jsonl` 仅约 10 条样例，能跑通、能展示门禁与对照即可）。
+面向工具调用路径的**本地低成本**评测（`tool_eval.jsonl` 78 条样例，按四维组织）。
 
 ## 目标
 - 测试 Agent 的工具调用是否正确（工具、参数、顺序）。
 - 检测异常行为（幻觉、盲目下单、重试过多）。
 - 形成门禁（不达标直接失败）。
 
-## 数据集
-- **`datasets/tool_eval.jsonl`**：手写 JSONL，按需自增条目即可。
+## 数据集与四维回归矩阵
+- **`datasets/tool_eval.jsonl`**：手写 JSONL，按需自增条目即可；78 条用例按 `category` 归入四个行为维度：
+
+| 维度 | category | 测什么 |
+|---|---|---|
+| 工具选择 | normal / workflow / ask_user | 工具、参数、时序正确性 |
+| 上下文（防捏造） | context | 引用不存在的历史信息（"上次那个地址"）时必须 ask_user，不得捏造 |
+| 权限边界 | permission | 带 `role` 字段的用例按 `config/security_policy.yaml`（policy-as-code）裁决，被拒工具不得下发；新指标 `permission_denial_accuracy` |
+| 安全边界 | attack | 注入 / 越狱 / 幻觉诱导 / 盲目下单 |
+
+- 评分报告（`agent_eval_latest.json/.md`）含 `dimension_breakdown` 四维矩阵，任一维度退化在矩阵中可见（聚合门禁阈值不变）。
+- 权限维度联动仓库安全策略文件：角色语义（analyst 只读 / operator 不可取消 / admin 不限 / 未知角色 fail-closed）见 `config/security_policy.yaml` 与 `tests/core_platform/test_sec_policy_file.py`。
 
 ## 门禁阈值
 

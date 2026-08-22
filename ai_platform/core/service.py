@@ -20,6 +20,7 @@ from ai_platform.core.exceptions import (
     SecurityBlockedError,
 )
 from ai_platform.core.factory import PlatformFactory
+from ai_platform.security.policy_file import PolicyFileError, load_policy_file, resolve_policy_path
 
 
 @dataclass(slots=True)
@@ -229,6 +230,10 @@ def create_platform_service(
         result = service.run("Hello world")
     """
     cfg = config or PlatformConfig.default()
+    if config is None:
+        # 显式传入的 config 优先级最高，不做文件覆盖；只有走默认
+        # 配置时才应用 policy 文件（config/security_policy.yaml）。
+        cfg = _apply_policy_file(cfg)
     factory = PlatformFactory(cfg)
 
     runtime = factory.create_agent_runtime(workflow=workflow)
@@ -241,3 +246,31 @@ def create_platform_service(
         quality_gate=gate,
         config=cfg,
     )
+
+
+def _apply_policy_file(cfg: PlatformConfig) -> PlatformConfig:
+    """policy-as-code：启动时加载 config/security_policy.yaml。
+
+    - 默认路径存在 → 加载并替换 security 策略（本仓库内置文件是
+      行为中立的：全局 allowed/blocked 为空，仅新增角色定义）；
+    - PLATFORM_SECURITY_POLICY 显式指定但文件不存在/不合法 →
+      fail-fast 抛 PlatformError（显式配置错误绝不静默）；
+    - 默认路径不存在（如裁剪部署）→ 跳过，行为与旧版一致。
+    """
+    import os
+    from dataclasses import replace as _replace
+
+    path = resolve_policy_path()
+    explicit = bool(os.environ.get("PLATFORM_SECURITY_POLICY", "").strip())
+    if not path.is_file():
+        if explicit:
+            raise PlatformError(f"PLATFORM_SECURITY_POLICY points to missing file: {path}")
+        return cfg
+    try:
+        policy = load_policy_file(path)
+    except PolicyFileError as exc:
+        if explicit:
+            raise PlatformError(f"invalid security policy file {path}: {exc}") from exc
+        # 默认路径的文件坏了也必须报——安全策略不允许静默降级。
+        raise PlatformError(f"invalid security policy file {path}: {exc}") from exc
+    return _replace(cfg, security=policy)

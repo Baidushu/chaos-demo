@@ -1,0 +1,32 @@
+# 本地提交前质量门禁（pre-commit）
+# 安装：pip install pre-commit && pre-commit install
+# 手动全仓检查：pre-commit run --all-files
+#
+# 作用域说明：ruff/black 与 CI（qa.yml pr-fast-feedback）保持一致，只查 app/；
+# 其余 hook（空白/换行/YAML/冲突标记/大文件）全仓生效，无行为风险。
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^reports/|^agent-eval/reports/
+      - id: end-of-file-fixer
+        exclude: ^reports/|^agent-eval/reports/
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        files: ^(app|ai_platform)/
+        args: [--fix]
+
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        files: ^app/

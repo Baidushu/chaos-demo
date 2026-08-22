@@ -11,6 +11,34 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class ToolRole:
+    """角色级工具权限——policy-as-code 的角色条目。
+
+    语义与全局字段一致：allowed_tools 为空 = 不限制（仍受 blocked
+    与全局约束）；非空 = 仅允许其中列出的工具。
+    """
+
+    description: str = ""
+    allowed_tools: list[str] = field(default_factory=list)
+    blocked_tools: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "description": self.description,
+            "allowed_tools": list(self.allowed_tools),
+            "blocked_tools": list(self.blocked_tools),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ToolRole":
+        return cls(
+            description=str(data.get("description", "")),
+            allowed_tools=[str(t) for t in data.get("allowed_tools", [])],
+            blocked_tools=[str(t) for t in data.get("blocked_tools", [])],
+        )
+
+
+@dataclass(slots=True)
 class SecurityPolicy:
     # -- Input validation --
     max_input_length: int = 4096
@@ -52,6 +80,13 @@ class SecurityPolicy:
     allowed_tools: list[str] = field(default_factory=list)
     blocked_tools: list[str] = field(default_factory=list)
 
+    # -- Role-based tool permission（policy-as-code 扩展）--
+    # roles: 角色名 -> ToolRole；default_role 非空时，未显式传角色的
+    # check() 调用按该角色裁决。两者默认为空 = 行为与旧版完全一致。
+    roles: dict[str, ToolRole] = field(default_factory=dict)
+    default_role: str = ""
+    policy_version: str = ""
+
     # -- Output checking --
     output_check_enabled: bool = True
     max_output_length: int = 8192
@@ -76,6 +111,9 @@ class SecurityPolicy:
             "tool_permission_enabled": self.tool_permission_enabled,
             "allowed_tools": list(self.allowed_tools),
             "blocked_tools": list(self.blocked_tools),
+            "roles": {name: role.to_dict() for name, role in self.roles.items()},
+            "default_role": self.default_role,
+            "policy_version": self.policy_version,
             "output_check_enabled": self.output_check_enabled,
             "max_output_length": self.max_output_length,
             "sensitive_keywords": list(self.sensitive_keywords),
@@ -102,6 +140,13 @@ class SecurityPolicy:
             tool_permission_enabled=bool(data.get("tool_permission_enabled", True)),
             allowed_tools=list(data.get("allowed_tools", [])),
             blocked_tools=list(data.get("blocked_tools", [])),
+            roles={
+                str(name): ToolRole.from_dict(role_data)
+                for name, role_data in dict(data.get("roles", {})).items()
+                if isinstance(role_data, dict)
+            },
+            default_role=str(data.get("default_role", "")),
+            policy_version=str(data.get("policy_version", "")),
             output_check_enabled=bool(data.get("output_check_enabled", True)),
             max_output_length=int(data.get("max_output_length", 8192)),
             sensitive_keywords=list(data.get("sensitive_keywords", [])),

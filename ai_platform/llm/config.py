@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +78,9 @@ class GatewayConfig:
     provider: str = "ollama_chat"
     model: str = "qwen2.5:7b"
     endpoint: str = DEFAULT_OLLAMA_BASE_URL
-    api_key: str = ""
+    # repr=False：密钥绝不进入 repr/日志（由 tests/core_platform/
+    # test_secret_boundary.py 回归守护）。
+    api_key: str = field(default="", repr=False)
     timeout_sec: float = DEFAULT_TIMEOUT_SEC
 
 

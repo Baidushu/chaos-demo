@@ -1,0 +1,44 @@
+# =====================================================================
+# AI Platform 安全策略（policy-as-code）
+# ---------------------------------------------------------------------
+# - 本文件进 git 评审：任何权限变更都有 diff 与 PR 记录。
+# - 加载入口：ai_platform/security/policy_file.py::load_policy_file
+#   （create_platform_service() 启动时自动加载本文件；路径可用环境
+#   变量 PLATFORM_SECURITY_POLICY 覆盖）。
+# - schema 严格校验：未知键 / 未知角色 / 坏结构在加载期报错。
+# - 行为中立：全局 allowed/blocked 保持为空 = 未传角色的既有调用
+#   完全不受影响；角色约束仅在调用方显式传入 role（或配置
+#   default_role）时生效。
+# =====================================================================
+
+version: 1
+name: chaos-demo-ai-platform
+default_role: ""
+
+roles:
+  analyst:
+    description: 只读分析角色——仅允许查询类工具，禁止一切写操作
+    allowed_tools:
+      - query_order
+      - ask_user
+    blocked_tools:
+      - place_order
+      - cancel_order
+
+  operator:
+    description: 运维角色——查询与下单可用，取消需 admin
+    allowed_tools:
+      - query_order
+      - place_order
+      - ask_user
+    blocked_tools:
+      - cancel_order
+
+  admin:
+    description: 管理角色——allowed_tools 为空表示不限制（仍受全局 blocked 约束）
+    allowed_tools: []
+    blocked_tools: []
+
+security:
+  security_enabled: true
+  tool_permission_enabled: true

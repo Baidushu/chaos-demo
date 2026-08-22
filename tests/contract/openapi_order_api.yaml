@@ -1,0 +1,124 @@
+# Chaos Service 订单核心 API 契约（OpenAPI 3.0）
+# ------------------------------------------------------------------------
+# 用途：schemathesis 契约测试的数据源（tests/contract/test_order_api_contract.py），
+#       随仓库评审——API 行为变更必须同步修改本文件（契约先行）。
+# 覆盖端点：POST /order、GET /order/{id}、POST /order/{id}/cancel、GET /healthz。
+# 状态码契约与实现核对依据：
+#   app/api/order_controller.py + app/service/order_service.py + app/exceptions/
+#   POST /order → 201(创建)/202(熔断打开、幂等处理中、超时保护)/400(校验)/503(库存忙、存储不可用)
+#   GET|cancel  → 200/404(不存在)/503(存储不可用)
+openapi: 3.0.3
+info:
+  title: Chaos Service Order API
+  version: "1.0"
+servers:
+  - url: /
+paths:
+  /order:
+    post:
+      summary: 创建订单（含幂等与韧性保护路径）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_id]
+              properties:
+                item_id:
+                  type: string
+                  minLength: 1
+                quantity:
+                  type: integer
+                  minimum: 1
+      responses:
+        "201":
+          description: 订单创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+        "202":
+          description: 降级受理（熔断打开 / 幂等处理中 / 超时保护）
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: 参数校验失败（item_id 缺失 / quantity 非法）
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          description: 库存忙或订单存储不可用
+          content:
+            application/json:
+              schema:
+                type: object
+  /order/{order_id}:
+    get:
+      summary: 查询订单
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 订单详情
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: 订单不存在
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          description: 订单存储不可用
+          content:
+            application/json:
+              schema:
+                type: object
+  /order/{order_id}/cancel:
+    post:
+      summary: 取消订单
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 取消成功
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: 订单不存在
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          description: 订单存储不可用
+          content:
+            application/json:
+              schema:
+                type: object
+  /healthz:
+    get:
+      summary: 健康检查（Redis 不可达时 degraded 但仍 200）
+      responses:
+        "200":
+          description: 健康（或降级）状态
+          content:
+            application/json:
+              schema:
+                type: object

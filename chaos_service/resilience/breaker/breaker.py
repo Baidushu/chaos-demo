@@ -47,8 +47,11 @@ class CircuitBreaker:
             return False
 
         acquired = self._storage.try_acquire_probe(self._rule)
-        self._probe_acquired = acquired
         if acquired:
+            # 只在成功获取时置位：竞争失败的请求不得清掉在途探针的归属，
+            # 否则共享实例场景下探针请求的 record_* 会走错路径（由
+            # tests/unit/test_circuit_breaker_stateful.py 状态机回归覆盖）。
+            self._probe_acquired = True
             self._emit_state_change(CircuitState.OPEN, CircuitState.HALF_OPEN)
             self._last_state = CircuitState.HALF_OPEN
             self._metrics.set_state(self._rule.resource, CircuitState.HALF_OPEN)

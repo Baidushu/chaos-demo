@@ -119,6 +119,123 @@ def retry_tax_ratio(run):
     return (ar_f - an_f) / an_f
 
 
+# 重试税子门禁的最小重试样本数：低于此值时比值方差大（哪几条用例命中重试
+# 由随机故障决定），跳过判定避免小样本误杀。
+RETRY_TAX_MIN_SAMPLES = 5
+
+
+def evaluate_token_black_hole_gate(
+    baseline: dict,
+    chaos: dict,
+    *,
+    token_surge_max: float,
+    token_max_per_task_max: float,
+    token_p99_per_task_max: float,
+    retry_surge_max: float,
+    fail_path_surge_max: float,
+    retry_path_surge_max: float,
+    retry_tax_max: float,
+) -> dict:
+    """Token 黑洞门禁：混沌注入不得造成 token 消耗病态放大。7 个子门禁任一失败即整体 FAIL。
+
+    retry_tax 子门禁的口径注意：同一 run 内「有重试 vs 无重试」样本的均值 token
+    增幅，与「哪些用例命中重试」强相关——长 prompt 的重用例天然更容易触发重试
+    （混淆了重试成本与用例复杂度）；且规则模式下 planner 重跑一次 ≈ token 翻倍，
+    因此阈值必须高于正常重试结构成本（默认 1.50），只拦截病态放大（如无界重试
+    循环）；样本不足 RETRY_TAX_MIN_SAMPLES 时跳过（小样本方差会误杀）。
+    主门禁是 token_surge（混沌 vs 基线的平均 token 增幅），默认上限 30%。
+    """
+    t_ratio = token_surge_ratio(
+        float(baseline.get("avg_token_per_task") or 0),
+        float(chaos.get("avg_token_per_task") or 0),
+    )
+    chaos_max_token = float(chaos.get("max_token_per_task") or 0.0)
+    chaos_p99_token = float(chaos.get("p99_token_per_task") or 0.0)
+    r_surge = float(chaos.get("retry_rate") or 0) - float(baseline.get("retry_rate") or 0)
+    token_gate_pass = t_ratio <= token_surge_max
+    token_max_gate_pass = chaos_max_token <= token_max_per_task_max
+    token_p99_gate_pass = chaos_p99_token <= token_p99_per_task_max
+    retry_gate_pass = r_surge <= retry_surge_max
+
+    bf = baseline.get("avg_token_rule_fail")
+    cf = chaos.get("avg_token_rule_fail")
+    try:
+        bf_f = float(bf) if bf is not None else None
+        cf_f = float(cf) if cf is not None else None
+    except (TypeError, ValueError):
+        bf_f, cf_f = None, None
+    fp_ratio = fail_path_surge_ratio(bf_f, cf_f)
+    fail_path_gate_pass = True if fp_ratio is None else fp_ratio <= fail_path_surge_max
+
+    br = baseline.get("avg_token_with_retry")
+    cr = chaos.get("avg_token_with_retry")
+    try:
+        br_r = float(br) if br is not None else None
+        cr_r = float(cr) if cr is not None else None
+    except (TypeError, ValueError):
+        br_r, cr_r = None, None
+    rp_ratio = fail_path_surge_ratio(br_r, cr_r)
+    # 仅当两侧都有「重试样本」时的均值才校验（否则无对照意义，跳过）
+    base_retry_n = int(baseline.get("retry_case_count") or 0)
+    chaos_retry_n = int(chaos.get("retry_case_count") or 0)
+    if rp_ratio is None or base_retry_n == 0 or chaos_retry_n == 0:
+        retry_path_gate_pass = True
+    else:
+        retry_path_gate_pass = rp_ratio <= retry_path_surge_max
+
+    chaos_retry_tax = retry_tax_ratio(chaos)
+    baseline_retry_tax = retry_tax_ratio(baseline)
+    if chaos_retry_tax is None:
+        retry_tax_gate_pass = True
+        retry_tax_skipped = "no_retry_samples"
+    elif chaos_retry_n < RETRY_TAX_MIN_SAMPLES:
+        retry_tax_gate_pass = True
+        retry_tax_skipped = f"insufficient_samples({chaos_retry_n}<{RETRY_TAX_MIN_SAMPLES})"
+    else:
+        retry_tax_gate_pass = chaos_retry_tax <= retry_tax_max
+        retry_tax_skipped = False
+
+    token_black_hole_gate_pass = (
+        token_gate_pass
+        and token_max_gate_pass
+        and token_p99_gate_pass
+        and retry_gate_pass
+        and fail_path_gate_pass
+        and retry_path_gate_pass
+        and retry_tax_gate_pass
+    )
+
+    return {
+        "token_surge_ratio": t_ratio,
+        "token_surge_max": token_surge_max,
+        "token_surge_pass": token_gate_pass,
+        "chaos_max_token_per_task": chaos_max_token,
+        "token_max_per_task_max": token_max_per_task_max,
+        "token_max_per_task_pass": token_max_gate_pass,
+        "chaos_p99_token_per_task": chaos_p99_token,
+        "token_p99_per_task_max": token_p99_per_task_max,
+        "token_p99_per_task_pass": token_p99_gate_pass,
+        "retry_rate_surge": r_surge,
+        "retry_surge_max": retry_surge_max,
+        "retry_surge_pass": retry_gate_pass,
+        "fail_path_token_surge_ratio": fp_ratio,
+        "fail_path_token_surge_max": fail_path_surge_max,
+        "fail_path_surge_pass": fail_path_gate_pass,
+        "retry_path_token_surge_ratio": rp_ratio,
+        "retry_path_token_surge_max": retry_path_surge_max,
+        "retry_path_surge_pass": retry_path_gate_pass,
+        "baseline_retry_case_count": base_retry_n,
+        "chaos_retry_case_count": chaos_retry_n,
+        "chaos_retry_tax_ratio": chaos_retry_tax,
+        "retry_tax_max": retry_tax_max,
+        "retry_tax_min_samples": RETRY_TAX_MIN_SAMPLES,
+        "retry_tax_skipped": retry_tax_skipped,
+        "retry_tax_pass": retry_tax_gate_pass,
+        "baseline_retry_tax_ratio": baseline_retry_tax,
+        "pass": token_black_hole_gate_pass,
+    }
+
+
 def _delta_optional(chaos_val, baseline_val):
     if chaos_val is None or baseline_val is None:
         return None
@@ -190,6 +307,11 @@ def main():
         action="store_true",
         help="Exit with code 1 if token surge gate fails (default: only write report).",
     )
+    # 故障参数可选注入（声明式实验 agent-eval/scripts/run_experiment.py 使用；
+    # 默认值与历史行为一致，CI 直接 --strict 不受影响）
+    parser.add_argument("--chaos", default="mixed", choices=["latency", "error", "mixed"])
+    parser.add_argument("--fail-rate", type=float, default=0.45, dest="fail_rate")
+    parser.add_argument("--latency-ms", type=int, default=180, dest="latency_ms")
     args = parser.parse_args()
 
     token_surge_max = float(os.getenv("CHAOS_TOKEN_SURGE_MAX", "0.30"))
@@ -198,67 +320,31 @@ def main():
     retry_surge_max = float(os.getenv("CHAOS_RETRY_SURGE_MAX", "0.25"))
     fail_path_surge_max = float(os.getenv("CHAOS_FAIL_PATH_TOKEN_SURGE_MAX", "0.50"))
     retry_path_surge_max = float(os.getenv("CHAOS_RETRY_PATH_TOKEN_SURGE_MAX", "0.60"))
-    # 小样本（如 10 条）下仅 1 条重试时重试税方差大，默认 0.60 减少误杀；可收紧为 0.50
-    retry_tax_max = float(os.getenv("CHAOS_RETRY_TAX_MAX", "0.60"))
+    # 重试税阈值须高于正常重试结构成本（planner 重跑≈token 翻倍，中位数实测
+    # 可达 100%+）；只拦病态放大。旧值 0.60 低于结构成本，会周期性误杀。
+    retry_tax_max = float(os.getenv("CHAOS_RETRY_TAX_MAX", "1.50"))
     #运行基线和混合故障场景（各写到独立 trace 文件，避免后一轮覆盖前一轮）
     baseline = run_one("none", 0.0, 0, trace_file=str(TRACE_BASELINE_PATH))
-    #混沌组：混合麻烦（mixed），45%的请求会失败，每个请求延迟 180ms
-    chaos = run_one("mixed", 0.45, 180, trace_file=str(TRACE_CHAOS_PATH))
-
-    t_ratio = token_surge_ratio(baseline["avg_token_per_task"], chaos["avg_token_per_task"])
-    chaos_max_token = float(chaos.get("max_token_per_task") or 0.0)
-    chaos_p99_token = float(chaos.get("p99_token_per_task") or 0.0)
-    r_surge = chaos["retry_rate"] - baseline["retry_rate"]
-    token_gate_pass = t_ratio <= token_surge_max
-    token_max_gate_pass = chaos_max_token <= token_max_per_task_max
-    token_p99_gate_pass = chaos_p99_token <= token_p99_per_task_max
-    retry_gate_pass = r_surge <= retry_surge_max
-
-    bf = baseline.get("avg_token_rule_fail")
-    cf = chaos.get("avg_token_rule_fail")
-    try:
-        bf_f = float(bf) if bf is not None else None
-        cf_f = float(cf) if cf is not None else None
-    except (TypeError, ValueError):
-        bf_f, cf_f = None, None
-    fp_ratio = fail_path_surge_ratio(bf_f, cf_f)
-    if fp_ratio is None:
-        fail_path_gate_pass = True
-    else:
-        fail_path_gate_pass = fp_ratio <= fail_path_surge_max
-
-    br = baseline.get("avg_token_with_retry")
-    cr = chaos.get("avg_token_with_retry")
-    try:
-        br_r = float(br) if br is not None else None
-        cr_r = float(cr) if cr is not None else None
-    except (TypeError, ValueError):
-        br_r, cr_r = None, None
-    rp_ratio = fail_path_surge_ratio(br_r, cr_r)
-    # 仅当两侧都有「重试样本」时的均值才校验（否则无对照意义，跳过）
-    base_retry_n = int(baseline.get("retry_case_count") or 0)
-    chaos_retry_n = int(chaos.get("retry_case_count") or 0)
-    if rp_ratio is None or base_retry_n == 0 or chaos_retry_n == 0:
-        retry_path_gate_pass = True
-    else:
-        retry_path_gate_pass = rp_ratio <= retry_path_surge_max
-
-    chaos_retry_tax = retry_tax_ratio(chaos)
-    baseline_retry_tax = retry_tax_ratio(baseline)
-    if chaos_retry_tax is None:
-        retry_tax_gate_pass = True
-    else:
-        retry_tax_gate_pass = chaos_retry_tax <= retry_tax_max
-
-    token_black_hole_gate_pass = (
-        token_gate_pass
-        and token_max_gate_pass
-        and token_p99_gate_pass
-        and retry_gate_pass
-        and fail_path_gate_pass
-        and retry_path_gate_pass
-        and retry_tax_gate_pass
+    #混沌组：默认混合故障 45% 失败率 + 180ms 延迟（可用 CLI 参数覆盖）
+    chaos = run_one(
+        args.chaos,
+        args.fail_rate,
+        args.latency_ms,
+        trace_file=str(TRACE_CHAOS_PATH),
     )
+
+    gate = evaluate_token_black_hole_gate(
+        baseline,
+        chaos,
+        token_surge_max=token_surge_max,
+        token_max_per_task_max=token_max_per_task_max,
+        token_p99_per_task_max=token_p99_per_task_max,
+        retry_surge_max=retry_surge_max,
+        fail_path_surge_max=fail_path_surge_max,
+        retry_path_surge_max=retry_path_surge_max,
+        retry_tax_max=retry_tax_max,
+    )
+    token_black_hole_gate_pass = gate["pass"]
 
     result = {
         "baseline": baseline,
@@ -286,38 +372,17 @@ def main():
             "hallucination_rate": chaos["hallucination_rate"] - baseline["hallucination_rate"],
             "planner_invalid_rate": chaos.get("planner_invalid_rate", 0) - baseline.get("planner_invalid_rate", 0),
         },
-        "token_black_hole_gate": {
-            "token_surge_ratio": t_ratio,
-            "token_surge_max": token_surge_max,
-            "token_surge_pass": token_gate_pass,
-            "chaos_max_token_per_task": chaos_max_token,
-            "token_max_per_task_max": token_max_per_task_max,
-            "token_max_per_task_pass": token_max_gate_pass,
-            "chaos_p99_token_per_task": chaos_p99_token,
-            "token_p99_per_task_max": token_p99_per_task_max,
-            "token_p99_per_task_pass": token_p99_gate_pass,
-            "retry_rate_surge": r_surge,
-            "retry_surge_max": retry_surge_max,
-            "retry_surge_pass": retry_gate_pass,
-            "fail_path_token_surge_ratio": fp_ratio,
-            "fail_path_token_surge_max": fail_path_surge_max,
-            "fail_path_surge_pass": fail_path_gate_pass,
-            "retry_path_token_surge_ratio": rp_ratio,
-            "retry_path_token_surge_max": retry_path_surge_max,
-            "retry_path_surge_pass": retry_path_gate_pass,
-            "baseline_retry_case_count": base_retry_n,
-            "chaos_retry_case_count": chaos_retry_n,
-            "chaos_retry_tax_ratio": chaos_retry_tax,
-            "retry_tax_max": retry_tax_max,
-            "retry_tax_pass": retry_tax_gate_pass,
-            "baseline_retry_tax_ratio": baseline_retry_tax,
-            "pass": token_black_hole_gate_pass,
-        },
+        "token_black_hole_gate": gate,
     }
 
     with COMPARE_JSON.open("w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
+    fp_ratio_txt = "N/A" if gate["fail_path_token_surge_ratio"] is None else f"{gate['fail_path_token_surge_ratio']:.2%}"
+    rp_ratio_txt = "N/A" if gate["retry_path_token_surge_ratio"] is None else f"{gate['retry_path_token_surge_ratio']:.2%}"
+    tax_ratio_txt = "N/A" if gate["chaos_retry_tax_ratio"] is None else f"{gate['chaos_retry_tax_ratio']:.2%}"
+    base_tax_txt = "N/A" if gate["baseline_retry_tax_ratio"] is None else f"{gate['baseline_retry_tax_ratio']:.2%}"
+    tax_skip_txt = f"; 已跳过: {gate['retry_tax_skipped']}" if gate.get("retry_tax_skipped") else ""
     md = [
         "# Chaos Compare Report",
         "",
@@ -329,10 +394,10 @@ def main():
         f"| Retry Rate | {pct(baseline['retry_rate'])} | {pct(chaos['retry_rate'])} | {pct(result['delta']['retry_rate'])} |",
         f"| Avg Tool Calls | {baseline['avg_tool_calls_per_task']:.2f} | {chaos['avg_tool_calls_per_task']:.2f} | {result['delta']['avg_tool_calls_per_task']:+.2f} |",
         f"| Avg Token/Task | {baseline['avg_token_per_task']:.1f} | {chaos['avg_token_per_task']:.1f} | {result['delta']['avg_token_per_task']:+.1f} |",
-        f"| Max Token/Task | {float(baseline.get('max_token_per_task') or 0):.1f} | {chaos_max_token:.1f} | "
-        f"{(chaos_max_token - float(baseline.get('max_token_per_task') or 0)):+.1f} |",
-        f"| P99 Token/Task | {float(baseline.get('p99_token_per_task') or 0):.1f} | {chaos_p99_token:.1f} | "
-        f"{(chaos_p99_token - float(baseline.get('p99_token_per_task') or 0)):+.1f} |",
+        f"| Max Token/Task | {float(baseline.get('max_token_per_task') or 0):.1f} | {gate['chaos_max_token_per_task']:.1f} | "
+        f"{(gate['chaos_max_token_per_task'] - float(baseline.get('max_token_per_task') or 0)):+.1f} |",
+        f"| P99 Token/Task | {float(baseline.get('p99_token_per_task') or 0):.1f} | {gate['chaos_p99_token_per_task']:.1f} | "
+        f"{(gate['chaos_p99_token_per_task'] - float(baseline.get('p99_token_per_task') or 0)):+.1f} |",
         f"| Hallucination Rate | {pct(baseline['hallucination_rate'])} | {pct(chaos['hallucination_rate'])} | {pct(result['delta']['hallucination_rate'])} |",
         f"| Planner Invalid Rate | {pct(baseline.get('planner_invalid_rate', 0))} | {pct(chaos.get('planner_invalid_rate', 0))} | {pct(result['delta']['planner_invalid_rate'])} |",
         "",
@@ -364,29 +429,23 @@ def main():
         "",
         "## Token black hole gate (chaos vs baseline)",
         "",
-        f"- token_surge_ratio: {t_ratio:.2%} (max allowed: {pct(token_surge_max)})",
-        f"- token_surge_pass: {token_gate_pass}",
-        f"- chaos_max_token_per_task: {chaos_max_token:.1f} (max allowed: {token_max_per_task_max:.1f})",
-        f"- token_max_per_task_pass: {token_max_gate_pass}",
-        f"- chaos_p99_token_per_task: {chaos_p99_token:.1f} (max allowed: {token_p99_per_task_max:.1f})",
-        f"- token_p99_per_task_pass: {token_p99_gate_pass}",
-        f"- retry_rate_surge: {pct(r_surge)} (max allowed: {pct(retry_surge_max)})",
-        f"- retry_surge_pass: {retry_gate_pass}",
-        f"- fail_path_token_surge_ratio: "
-        f"{('N/A' if fp_ratio is None else f'{fp_ratio:.2%}')} "
-        f"(max allowed: {pct(fail_path_surge_max)})",
-        f"- fail_path_surge_pass: {fail_path_gate_pass}",
-        f"- retry_path_token_surge_ratio: "
-        f"{('N/A' if rp_ratio is None else f'{rp_ratio:.2%}')} "
-        f"(max allowed: {pct(retry_path_surge_max)}; "
-        f"baseline_retry_n={base_retry_n}, chaos_retry_n={chaos_retry_n})",
-        f"- retry_path_surge_pass: {retry_path_gate_pass}",
-        f"- chaos_retry_tax_ratio: "
-        f"{('N/A' if chaos_retry_tax is None else f'{chaos_retry_tax:.2%}')} "
-        f"(max allowed: {pct(retry_tax_max)}; 有重试时相对无重试样本的 token 增幅)",
-        f"- baseline_retry_tax_ratio: "
-        f"{('N/A' if baseline_retry_tax is None else f'{baseline_retry_tax:.2%}')}",
-        f"- retry_tax_pass: {retry_tax_gate_pass}",
+        f"- token_surge_ratio: {gate['token_surge_ratio']:.2%} (max allowed: {pct(gate['token_surge_max'])})",
+        f"- token_surge_pass: {gate['token_surge_pass']}",
+        f"- chaos_max_token_per_task: {gate['chaos_max_token_per_task']:.1f} (max allowed: {gate['token_max_per_task_max']:.1f})",
+        f"- token_max_per_task_pass: {gate['token_max_per_task_pass']}",
+        f"- chaos_p99_token_per_task: {gate['chaos_p99_token_per_task']:.1f} (max allowed: {gate['token_p99_per_task_max']:.1f})",
+        f"- token_p99_per_task_pass: {gate['token_p99_per_task_pass']}",
+        f"- retry_rate_surge: {pct(gate['retry_rate_surge'])} (max allowed: {pct(gate['retry_surge_max'])})",
+        f"- retry_surge_pass: {gate['retry_surge_pass']}",
+        f"- fail_path_token_surge_ratio: {fp_ratio_txt} (max allowed: {pct(gate['fail_path_token_surge_max'])})",
+        f"- fail_path_surge_pass: {gate['fail_path_surge_pass']}",
+        f"- retry_path_token_surge_ratio: {rp_ratio_txt} (max allowed: {pct(gate['retry_path_token_surge_max'])}; "
+        f"baseline_retry_n={gate['baseline_retry_case_count']}, chaos_retry_n={gate['chaos_retry_case_count']})",
+        f"- retry_path_surge_pass: {gate['retry_path_surge_pass']}",
+        f"- chaos_retry_tax_ratio: {tax_ratio_txt} (max allowed: {pct(gate['retry_tax_max'])}; "
+        f"有重试时相对无重试样本的 token 增幅{tax_skip_txt})",
+        f"- baseline_retry_tax_ratio: {base_tax_txt}",
+        f"- retry_tax_pass: {gate['retry_tax_pass']}",
         f"- **token_black_hole_gate_pass: {token_black_hole_gate_pass}**",
         "",
         "## Runtime trace (HTTP tool calls)",
@@ -428,12 +487,14 @@ def main():
 
     print(f"Saved compare json: {COMPARE_JSON}")
     print(f"Saved compare md: {COMPARE_MD}")
-    fp_txt = "N/A" if fp_ratio is None else f"{fp_ratio:.2%}"
-    rp_txt = "N/A" if rp_ratio is None else f"{rp_ratio:.2%}"
-    tax_txt = "N/A" if chaos_retry_tax is None else f"{chaos_retry_tax:.2%}"
+    fp_txt = "N/A" if gate["fail_path_token_surge_ratio"] is None else f"{gate['fail_path_token_surge_ratio']:.2%}"
+    rp_txt = "N/A" if gate["retry_path_token_surge_ratio"] is None else f"{gate['retry_path_token_surge_ratio']:.2%}"
+    tax_txt = "N/A" if gate["chaos_retry_tax_ratio"] is None else f"{gate['chaos_retry_tax_ratio']:.2%}"
+    if gate["retry_tax_skipped"]:
+        tax_txt += f" (skipped: {gate['retry_tax_skipped']})"
     print(
         f"[TOKEN_BLACK_HOLE_GATE] pass={token_black_hole_gate_pass} "
-        f"token_surge={t_ratio:.2%} retry_surge={r_surge:.2%} "
+        f"token_surge={gate['token_surge_ratio']:.2%} retry_surge={gate['retry_rate_surge']:.2%} "
         f"fail_path_surge={fp_txt} retry_path_surge={rp_txt} "
         f"chaos_retry_tax={tax_txt}"
     )

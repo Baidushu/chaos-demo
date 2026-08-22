@@ -20,11 +20,24 @@ except Exception:  # pragma: no cover - 依赖缺失时跳过隔离
 
 
 @pytest.fixture(autouse=True)
-def _isolate_repo_env():
-    """隔离仓库根 .env：本地开发机的 LLM_GATEWAY_*（DeepSeek key 等）
-    不得污染断言 legacy 变量/YAML 默认值的测试。"""
+def _isolate_repo_env(monkeypatch):
+    """隔离本地环境里的真实 LLM 凭据，保证测试确定性。
+
+    1) 仓库根 .env 的 LLM_GATEWAY_*（DeepSeek key 等）不得污染
+       断言 legacy 变量/YAML 默认值的测试；
+    2) 遗留 llm_client 的 LLM_API_KEY / LLM_BACKEND 等（可能来自
+       local_llm_env.ps1 或会话环境变量）同理——否则「无 key 应报错」
+       类测试在配了真 key 的开发机上会 DID NOT RAISE。
+
+    置空而非删除：dotenv/客户端按「falsy 走默认值」处理空串，
+    测试内部仍可用 monkeypatch.setenv 覆盖。
+    """
     if isolate_repo_env_for_tests is not None:
         isolate_repo_env_for_tests()
+    # delenv 而非 setenv("")：llm_client 用 `os.getenv("LLM_BACKEND", "auto")`
+    # 读默认值，变量「存在但为空」会让默认值不生效、跳过 auto 后端检测。
+    for name in ("LLM_API_KEY", "LLM_BACKEND", "LLM_BASE_URL", "LLM_MODEL", "LLM_TIMEOUT_SEC"):
+        monkeypatch.delenv(name, raising=False)
     yield
 
 

@@ -19,6 +19,7 @@ from ai_platform.core import (
     SecurityBlockedError,
     create_platform_service,
 )
+from ai_platform.security.redaction import redact
 
 # ── Application ──────────────────────────────────────────────────────
 
@@ -82,10 +83,12 @@ class HealthResponse(BaseModel):
 
 
 def _error(status_code: int, error_type: str, message: str, violations: list[str] | None = None) -> JSONResponse:
+    # 安全边界：异常消息离开平台前统一脱敏——即使上游失误把密钥
+    # 拼进了消息（repr(config)、URL、上游响应体等），也不会外泄。
     return JSONResponse(
         status_code=status_code,
         content=ErrorResponse(
-            error=message,
+            error=redact(message),
             error_type=error_type,
             violations=violations or [],
         ).model_dump(),

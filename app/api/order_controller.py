@@ -15,12 +15,23 @@ def register_routes(flask_app, runtime) -> None:
     @flask_app.route("/order", methods=["POST"])
     def create_order():
         req = cast(Any, request)
-        payload = request.get_json(silent=True) or {}
+        payload = request.get_json(silent=True)
+        # 类型守卫：body 可能是 list/str/number 等 JSON 非 object 形态
+        # （schemathesis fuzz 实证：[null,null] 曾触发 AttributeError → 500）
+        if not isinstance(payload, dict):
+            payload = {}
         item_id = payload.get("item_id")
-        try:
-            quantity = int(payload.get("quantity", 1))
-        except (TypeError, ValueError):
-            quantity = -1
+        raw_quantity = payload.get("quantity", 1)
+        # 契约对齐（tests/contract/openapi_order_api.yaml）：item_id 必须
+        # string、quantity 必须 int（拒绝 bool/float/list 等类型混淆输入）。
+        # 该防线由 schemathesis 负向用例驱动——曾发现 [null,null] 作为
+        # item_id 穿透 truthy 校验直达存储层的缺口。
+        if not isinstance(item_id, str):
+            item_id = None  # 交由 service 的必填校验拒绝 → 400
+        if isinstance(raw_quantity, bool) or not isinstance(raw_quantity, int):
+            quantity = -1  # 非法 → service 校验拒绝 → 400
+        else:
+            quantity = raw_quantity
 
         result = order_service.create_order(
             CreateOrderCommand(

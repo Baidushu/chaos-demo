@@ -3,3 +3,5 @@
 fastapi>=0.115.0
 pydantic>=2.0.0
 uvicorn[standard]>=0.30.0
+# 安全策略文件（config/security_policy.yaml）加载
+PyYAML>=6.0.1

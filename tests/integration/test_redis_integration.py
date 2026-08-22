@@ -63,6 +63,10 @@ def test_real_redis_sliding_window_rejects(real_redis_state):
 def test_real_redis_concurrent_idempotency_no_duplicate(real_redis_state, monkeypatch):
     monkeypatch.setattr(real_redis_state.random, "uniform", lambda a, b: 0.03)
     monkeypatch.setattr(real_redis_state.random, "random", lambda: 1.0)
+    # 本机 Docker-Windows 网络路径慢（实测单请求 ~52ms），默认 45ms 业务预算
+    # 会误触发 timeout-protected 202；本用例关注幂等语义而非超时保护，
+    # 放宽预算让断言聚焦「并发同 key → 201 + 200 且 order_id 一致」。
+    monkeypatch.setattr(real_redis_state, "BUSINESS_TIMEOUT_MS", 1000)
 
     results = []
     errors = []

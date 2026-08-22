@@ -23,3 +23,17 @@ warn_unused_ignores = true
 check_untyped_defs = true
 disallow_untyped_defs = false
 no_implicit_optional = false
+
+# 变异测试：只对韧性核心做变异，用 focused 测试集杀变异
+# （全量套件跑 70+ 变异体太慢；选 tests/unit 保障夜间可完成）
+[tool.mutmut]
+source_paths = [
+    "chaos_service/resilience/breaker/breaker.py",
+    "chaos_service/rate_limiter.py",
+]
+pytest_add_cli_args_test_selection = ["tests/unit/"]
+# mutmut 只拷贝 source_paths + 测试到 mutants/；补充拷贝运行时依赖：
+# app/（conftest 顶层 import）、lua/（限流器 Lua 脚本磁盘加载）、
+# chaos_service/（同包兄弟模块 store/traffic 等，变异体在其后生成不冲突）、
+# pytest.ini（markers 注册——mutants 内缺它会在 --strict-markers 下 INTERNALERROR）
+also_copy = ["app", "lua", "chaos_service", "pytest.ini"]

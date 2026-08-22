@@ -81,6 +81,18 @@ class TestDockerfileContent:
         assert content.count("FROM python:") >= 2, "Should use multi-stage build"
 
 
+class TestChaosDockerfileContent:
+    def test_dockerfile_copies_lua_scripts(self):
+        """限流器（默认 sliding 算法）运行时读取 lua/sliding_window.lua，
+        镜像缺少该目录会让 /order 请求在 before_request 直接 500。"""
+        content = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        assert "COPY lua ./lua" in content, "Chaos Dockerfile must copy lua scripts dir"
+
+    def test_lua_scripts_exist_in_repo(self):
+        assert (PROJECT_ROOT / "lua" / "sliding_window.lua").exists()
+        assert (PROJECT_ROOT / "lua" / "fixed_window.lua").exists()
+
+
 class TestDockerComposeContent:
     def test_yaml_is_valid(self):
         raw = (PROJECT_ROOT / "docker-compose.ai.yml").read_text(encoding="utf-8")

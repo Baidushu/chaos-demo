@@ -10,6 +10,12 @@ env/
 .pytest_cache/
 .pytest-tmp/
 .coverage
+.hypothesis/
+
+# mutmut 变异测试产物（本地生成 mutants/ 目录与缓存）
+mutants/
+mutants.json
+.mutmut-cache
 
 # Local / generated run artifacts
 reports/
@@ -27,7 +33,10 @@ Thumbs.db
 .claude/
 
 # 本地/个人文档目录（仅本地保留，不推送到远程）
-docs/
+# 例外：docs/adr/（架构决策记录）与 docs/slo.md（服务级别目标）随仓库评审
+docs/*
+!docs/adr/
+!docs/slo.md
 PROJECT_LEARNING_PROGRESS.md
 
 # 本地 LLM 密钥（复制 local_llm_env.example.ps1 为 local_llm_env.ps1；勿提交）
@@ -35,3 +44,9 @@ local_llm_env.ps1
 
 # 本地环境变量（含 API 密钥，绝不入库）
 .env
+
+# DSH / 编码代理的个人覆盖层（项目记忆的本地 overlay，不提交）
+AGENTS.local.md
+
+# WorkBuddy 会话数据（本地记忆/任务，绝不入库）
+.workbuddy/

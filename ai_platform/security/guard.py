@@ -47,9 +47,9 @@ class SecurityGuard:
 
         return SecurityResult.worst(result, injection_result)
 
-    def check_tool(self, tool_name: str) -> SecurityResult:
-        """Check tool permission."""
-        return self.permission.check(tool_name)
+    def check_tool(self, tool_name: str, role: str | None = None) -> SecurityResult:
+        """Check tool permission (optionally role-scoped, policy-as-code)."""
+        return self.permission.check(tool_name, role)
 
     def check_output(self, answer: Any) -> SecurityResult:
         """Check output safety."""

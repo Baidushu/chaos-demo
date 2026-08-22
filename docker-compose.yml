@@ -6,8 +6,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - RATE_LIMIT_PER_SEC=80 #限流速率
-      - BUSINESS_TIMEOUT_MS=50 #业务超时时间
+      - RATE_LIMIT_PER_SEC=20 #限流速率：须低于应用真实容量（本机 ~47 QPS），压测流量才会过载并触发限流，A/B 才能演示过载保护
+      - BUSINESS_TIMEOUT_MS=200 #业务超时预算：Docker-Windows 网络路径单请求 ~50ms，50ms 预算会让多数请求误转 202 排队，失真压测 Success 指标
       - BREAKER_FAIL_THRESHOLD=8 #熔断失败阈值
       - BREAKER_WINDOW_SEC=10 #熔断窗口时间
       - BREAKER_OPEN_SEC=8 #熔断打开时间

@@ -28,3 +28,79 @@ groups:
           severity: warning
         annotations:
           summary: "202 降级/排队类响应速率偏高（熔断或超时保护）"
+
+  # =====================================================================
+  # SLO burn-rate（详见 docs/slo.md）
+  # 多窗口/多燃烧率法：长窗与短窗同时越界才告警，避免单窗抖动误报。
+  # 可用性 SLO 99.9%（预算 0.1%）；延迟 SLO 99%（≤0.5s，预算 1%）。
+  # =====================================================================
+  - name: slo-burn-rate-recording
+    rules:
+      # 可用性错误比率（各窗口）
+      - record: slo:availability_error_ratio:rate1h
+        expr: sum(rate(http_request_errors_total[1h])) / sum(rate(http_requests_total[1h]))
+      - record: slo:availability_error_ratio:rate5m
+        expr: sum(rate(http_request_errors_total[5m])) / sum(rate(http_requests_total[5m]))
+      - record: slo:availability_error_ratio:rate6h
+        expr: sum(rate(http_request_errors_total[6h])) / sum(rate(http_requests_total[6h]))
+      - record: slo:availability_error_ratio:rate30m
+        expr: sum(rate(http_request_errors_total[30m])) / sum(rate(http_requests_total[30m]))
+      # 延迟违约比率：耗时 > 0.5s 的请求占比（1 - le 桶累计占比）
+      - record: slo:latency_violation_ratio:rate1h
+        expr: 1 - sum(rate(http_request_duration_seconds_bucket{le="0.5"}[1h])) / sum(rate(http_request_duration_seconds_count[1h]))
+      - record: slo:latency_violation_ratio:rate5m
+        expr: 1 - sum(rate(http_request_duration_seconds_bucket{le="0.5"}[5m])) / sum(rate(http_request_duration_seconds_count[5m]))
+      - record: slo:latency_violation_ratio:rate6h
+        expr: 1 - sum(rate(http_request_duration_seconds_bucket{le="0.5"}[6h])) / sum(rate(http_request_duration_seconds_count[6h]))
+      - record: slo:latency_violation_ratio:rate30m
+        expr: 1 - sum(rate(http_request_duration_seconds_bucket{le="0.5"}[30m])) / sum(rate(http_request_duration_seconds_count[30m]))
+
+  - name: slo-burn-rate-alerts
+    rules:
+      - alert: SLOAvailabilityFastBurn
+        expr: |
+          slo:availability_error_ratio:rate1h > (14.4 * 0.001)
+          and
+          slo:availability_error_ratio:rate5m > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "可用性错误预算快烧（1h+5m 双窗 > 14.4×，约 2 天耗尽月预算）"
+          description: "错误率 1h={{ $value | humanizePercentage }}；见 docs/slo.md §4"
+
+      - alert: SLOAvailabilitySlowBurn
+        expr: |
+          slo:availability_error_ratio:rate6h > (6 * 0.001)
+          and
+          slo:availability_error_ratio:rate30m > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "可用性错误预算慢烧（6h+30m 双窗 > 6×，约 5 天耗尽月预算）"
+          description: "工作时间排查；见 docs/slo.md §4"
+
+      - alert: SLOLatencyFastBurn
+        expr: |
+          slo:latency_violation_ratio:rate1h > (14.4 * 0.01)
+          and
+          slo:latency_violation_ratio:rate5m > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "延迟错误预算快烧（>0.5s 请求占比 1h+5m 双窗 > 14.4×）"
+          description: "慢请求占比过高；见 docs/slo.md §4"
+
+      - alert: SLOLatencySlowBurn
+        expr: |
+          slo:latency_violation_ratio:rate6h > (6 * 0.01)
+          and
+          slo:latency_violation_ratio:rate30m > (6 * 0.01)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "延迟错误预算慢烧（>0.5s 请求占比 6h+30m 双窗 > 6×）"
+          description: "工作时间排查；见 docs/slo.md §4"

@@ -106,6 +106,7 @@ _SIMULATED_METRICS = {
 
 _ROOT_CAUSE_MAP = {
     "Redis连接池耗尽": {
+        "root_cause_key": "redis_pool",
         "problem": "订单接口大量500错误，错误率35%，p99延迟从100ms飙升至5.2秒",
         "root_cause": "Redis连接池耗尽 — 高并发下连接池max=100全部占满，导致新请求获取连接超时",
         "evidence": [
@@ -118,6 +119,7 @@ _ROOT_CAUSE_MAP = {
         "confidence": 0.92
     },
     "数据库慢查询": {
+        "root_cause_key": "slow_db",
         "problem": "创建订单p99延迟从100ms涨到5秒",
         "root_cause": "数据库慢查询 + 连接池饱和 — pending状态订单扫描SQL耗时3.2秒，耗尽连接池",
         "evidence": [
@@ -130,6 +132,7 @@ _ROOT_CAUSE_MAP = {
         "confidence": 0.88
     },
     "缓存不一致": {
+        "root_cause_key": "cache_inconsistent",
         "problem": "订单查询返回404但实际存在",
         "root_cause": "Redis缓存与数据库不一致 — 写入DB成功但Redis缓存更新失败，导致读到过期数据",
         "evidence": [
@@ -142,6 +145,9 @@ _ROOT_CAUSE_MAP = {
         "confidence": 0.85
     }
 }
+
+
+_ROOT_CAUSE_KEYS = {entry["root_cause_key"] for entry in _ROOT_CAUSE_MAP.values()}
 
 
 # ── Demo Tools ───────────────────────────────────────────────────────
@@ -267,11 +273,18 @@ class AnalyzeIncidentTool(BaseTool):
 
     @staticmethod
     def _analyze_with_llm(logs_text: str, metrics_text: str, symptom: str) -> dict[str, Any] | None:
-        """真 LLM 根因分析；任何异常/输出不合法返回 None（上层降级到规则匹配）。"""
+        """真 LLM 根因分析；任何异常/输出不合法返回 None（上层降级到规则匹配）。
+
+        报告协议要求模型同时输出「根因类别键」root_cause_key：
+        判定正确性用类别键（确定性、零歧义），叙事用自由文本——各司其职。
+        对 LLM 自由文本做关键词判定是追词死路（措辞无穷变体），类别键
+        把自动判定收敛到有限枚举上。
+        """
         prompt = (
             "你是资深 SRE 故障诊断专家。根据以下日志、指标和用户描述，"
             "输出一个 JSON 对象（不要输出其他内容），字段：\n"
-            '{"problem": "故障现象", "root_cause": "根因", '
+            '{"root_cause_key": "根因类别（必须从 redis_pool / slow_db / cache_inconsistent '
+            '中三选一）", "problem": "故障现象", "root_cause": "根因", '
             '"evidence": ["证据1", "证据2"], "suggestion": "修复建议", '
             '"confidence": 0.0-1.0 置信度}\n'
             f"用户描述: {symptom or '服务异常'}\n"
@@ -300,8 +313,10 @@ class AnalyzeIncidentTool(BaseTool):
         if not isinstance(report, dict):
             return None
         # 结构校验：字段不齐则视为不可用
-        required = {"problem", "root_cause", "evidence", "suggestion", "confidence"}
+        required = {"root_cause_key", "problem", "root_cause", "evidence", "suggestion", "confidence"}
         if not required.issubset(report.keys()):
+            return None
+        if report.get("root_cause_key") not in _ROOT_CAUSE_KEYS:
             return None
         if not isinstance(report.get("evidence"), list) or not report.get("evidence"):
             return None
@@ -473,9 +488,16 @@ def run_incident_diagnosis(case_id: str | None = None, *, llm_enabled: bool | No
 
         # Check if root cause matches
         actual_rc = report.get("root_cause", "") if isinstance(report, dict) else ""
-        r["root_cause_match"] = _root_cause_matches(
-            case["expected_root_cause"], actual_rc, keywords=case.get("match_keywords")
-        )
+        # 首选：结构化类别键精确判定（LLM 与规则路径都携带 root_cause_key）；
+        # 回退：关键词等价类（报告缺类别键时）
+        expected_key = case.get("expected_root_cause_key")
+        actual_key = report.get("root_cause_key") if isinstance(report, dict) else None
+        if expected_key and actual_key:
+            r["root_cause_match"] = actual_key == expected_key
+        else:
+            r["root_cause_match"] = _root_cause_matches(
+                case["expected_root_cause"], actual_rc, keywords=case.get("match_keywords")
+            )
 
         results.append(r)
         _print_report(report, elapsed, case, match=r["root_cause_match"])
@@ -500,6 +522,7 @@ def _print_report(report: dict[str, Any], elapsed_ms: float, case: dict[str, Any
     print(f"  {'─' * 50}")
     print(f"  预期根因:   {case['expected_root_cause']}")
     print(f"  诊断判定:   {'正确' if match else '错误（与预期不符）'}")
+    print(f"  根因类别:   {report.get('root_cause_key', 'N/A')}")
     print(f"  分析后端:   {report.get('analysis_backend', 'rule')} / 数据来源: 日志={report.get('log_source', 'simulated')} 指标={report.get('metrics_source', 'simulated')}")
     print(f"  耗时:       {elapsed_ms:.1f}ms")
     print(f"  Trace ID:   (collector snapshot available)")
