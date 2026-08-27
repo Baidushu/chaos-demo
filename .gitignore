@@ -32,12 +32,12 @@ Thumbs.db
 # Cursor / Claude 本地配置
 .claude/
 
-# 本地/个人文档目录（仅本地保留，不推送到远程）
-# 例外：docs/adr/（架构决策记录）与 docs/slo.md（服务级别目标）随仓库评审
-docs/*
-!docs/adr/
-!docs/slo.md
+# 本地/个人文档与学习资产（仅本地保留，不推送到远程）
+# 含 docs/（文档库）、learning/（面试题库/学习笔记）、8 周学习计划
+docs/
+learning/
 PROJECT_LEARNING_PROGRESS.md
+PROJECT_OWNERSHIP_MASTER_PLAN_V2.md
 
 # 本地 LLM 密钥（复制 local_llm_env.example.ps1 为 local_llm_env.ps1；勿提交）
 local_llm_env.ps1
