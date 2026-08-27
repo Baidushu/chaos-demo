@@ -7,14 +7,14 @@ Usage:
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Any
 
 from ai_platform.core import (
     AIPlatformService,
-    PlatformConfig,
     PlatformError,
     SecurityBlockedError,
     create_platform_service,
@@ -82,7 +82,12 @@ class HealthResponse(BaseModel):
 # ── Error helpers ────────────────────────────────────────────────────
 
 
-def _error(status_code: int, error_type: str, message: str, violations: list[str] | None = None) -> JSONResponse:
+def _error(
+    status_code: int,
+    error_type: str,
+    message: str,
+    violations: list[str] | None = None,
+) -> JSONResponse:
     # 安全边界：异常消息离开平台前统一脱敏——即使上游失误把密钥
     # 拼进了消息（repr(config)、URL、上游响应体等），也不会外泄。
     return JSONResponse(
@@ -149,4 +154,9 @@ async def agent_run(body: AgentRunRequest) -> AgentRunResponse | JSONResponse:
 
     error_type = result.error_type or "UnknownError"
     status_codes = {"SecurityBlocked": 403, "AgentError": 500, "EvaluationFailed": 422}
-    return _error(status_codes.get(error_type, 500), error_type, result.error or "Unknown error", result.violations)
+    return _error(
+        status_codes.get(error_type, 500),
+        error_type,
+        result.error or "Unknown error",
+        result.violations,
+    )

@@ -6,17 +6,16 @@ GET  /api/v1/health          — health check
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.api.schemas import AgentRunRequest, AgentRunResponse, ErrorResponse, HealthResponse
 from ai_platform.core import (
     AIPlatformService,
-    PlatformConfig,
     PlatformError,
     SecurityBlockedError,
     create_platform_service,
 )
+from app.api.schemas import AgentRunRequest, AgentRunResponse, ErrorResponse, HealthResponse
 
 router = APIRouter(prefix="/api/v1", tags=["agent"])
 
@@ -36,7 +35,12 @@ def get_service() -> AIPlatformService:
 # ── Exception handlers ────────────────────────────────────────────────
 
 
-def _build_error(status_code: int, error_type: str, message: str, violations: list[str] | None = None) -> JSONResponse:
+def _build_error(
+    status_code: int,
+    error_type: str,
+    message: str,
+    violations: list[str] | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content=ErrorResponse(
