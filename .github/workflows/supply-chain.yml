@@ -49,16 +49,17 @@ jobs:
 
       - name: Install dependencies + cyclonedx
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-ai.txt
-          pip install cyclonedx-bom
+          python -m pip install --upgrade pip --break-system-packages
+          pip install -r requirements.txt -r requirements-ai.txt --break-system-packages
+          pip install cyclonedx-bom --break-system-packages
 
       - name: Generate CycloneDX SBOM (runtime)
-        run: >
-          cyclonedx-py environment
-          -o reports/sbom_runtime.json
-          --output-format JSON
-          --validate
+        run: |
+          mkdir -p reports
+          cyclonedx-py environment \
+            -o reports/sbom_runtime.json \
+            --output-format JSON \
+            --validate
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4

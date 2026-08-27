@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip --break-system-packages
           pip install -r requirements-ai.txt --break-system-packages
-          pip install pytest pytest-html httpx --break-system-packages
+          pip install pytest pytest-html httpx pyyaml --break-system-packages
 
       - name: Run core tests
         run: |
