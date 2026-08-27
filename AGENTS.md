@@ -36,8 +36,8 @@
 | `scripts/` | 旧版 AI 平台门禁脚本（generate_evaluation_report.py、run_quality_gate.py）+ `dsh.ps1`（DSH 启动器）。 |
 | `k8s/` | 可选 K8s 清单 + chaos-lite.ps1 混沌脚本 + CHAOS_LITE.md（不跑 CI 默认流程）。 |
 | `grafana/` | provisioning + 5 个预置大盘 JSON。 |
-| `docs/` | 文档库（api/architecture/engineering/interview/modules/testing/overview/archive…），本地保留不入库；**例外：`docs/adr/`（4 篇架构决策记录）与 `docs/slo.md`（SLO 与错误预算）随仓库评审提交**。 |
-| `learning/` | 学习产出（`秋招知识点治理与面试题库.md` 等）。 |
+| `docs/` | 文档库（api/architecture/engineering/interview/modules/testing/overview/archive/adr/slo 等），**仅本地保留不入库**。 |
+| `learning/` | 学习产出（面试题库、七日课笔记等），**仅本地保留不入库**。 |
 | `lua/` | 限流 Lua 脚本（fixed_window.lua / sliding_window.lua）。 |
 | `api-automation-demo/` | 独立 pytest 工程：httpx + YAML 数据驱动 + Allure，不与 app 同进程。 |
 | `sample-data/` | 示例流量 JSONL，供回放/学习。 |
