@@ -1,8 +1,6 @@
 # agent-eval
 
-> **主线叙事**：本目录是 **quality engineering 仓库里的扩展模块**，用于评估在**不稳定环境下**「按规划调用 HTTP 工具（下单/查询等）」的稳定性（重试、失败率、启发式 token 等），**不要**把整个 `chaos-demo` 讲成「AI Agent 项目」。技术事实与 CI 步骤仍以 [`../docs/AI_PROJECT_CONTEXT.md`](../docs/AI_PROJECT_CONTEXT.md) **§8** 为准；[`../docs/plan/AGENT_EVAL_PLAN.md`](../docs/plan/AGENT_EVAL_PLAN.md) 保留长期愿景与诚实边界（§2）。
-
-面向工具调用路径的**本地低成本**评测（`tool_eval.jsonl` 78 条样例，按四维组织）。
+> 面向工具调用路径的**本地低成本**评测（`tool_eval.jsonl` 78 条样例，按四维组织），用于评估在**不稳定环境下**「按规划调用 HTTP 工具（下单/查询等）」的稳定性（重试、失败率、启发式 token 等）。
 
 ## 目标
 - 测试 Agent 的工具调用是否正确（工具、参数、顺序）。
@@ -86,7 +84,7 @@ python .\agent-eval\scripts\eval_variance.py --runs 5 --chaos mixed --fail-rate 
 - `CHAOS_RETRY_SURGE_MAX`（默认 `0.25`，故障场景相对基线 retry_rate 最大允许增幅）
 - `CHAOS_FAIL_PATH_TOKEN_SURGE_MAX`（默认 `0.50`，**规则失败样本**上平均 token 相对基线的最大允许增幅；`chaos_compare.py` 使用）
 - `CHAOS_RETRY_PATH_TOKEN_SURGE_MAX`（默认 `0.60`，**仅含重试的 case** 上平均 token 的增幅上限；两侧均有 `retry_case_count>0` 时才启用）
-- `CHAOS_RETRY_TAX_MAX`（默认 `0.60`，**故障轮次内**「有重试样本 / 无重试样本」平均 token 的相对增幅上限；小样本 demo 下略放宽，可设 `0.50` 收紧）
+- `CHAOS_RETRY_TAX_MAX`（默认 `1.50`，重试样本 ≥5 条时启用：**故障轮次内**「有重试样本 / 无重试样本」平均 token 的相对增幅上限；阈值须高于规则模式 planner 重试的结构成本，只拦病态放大。门禁逻辑与单测见 `tests/test_chaos_gate.py`）
 - `TOKEN_METRIC`（默认 `auto`：`AGENT_MODE=ollama` 且 Ollama 返回 `prompt_eval_count`/`eval_count` 时用真实 token，否则用启发式；可选 `llm` / `estimated`）
 
 ## 输入与输出
@@ -99,10 +97,6 @@ python .\agent-eval\scripts\eval_variance.py --runs 5 --chaos mixed --fail-rate 
 - 多次运行波动：`agent-eval/reports/eval_variance_latest.json` / `.md`（见上文 `eval_variance.py`）
 
 评分报告中的 **Token by outcome**：按「规则通过/失败」与「是否发生工具重试」拆分平均 `token_usage`，用于观察失败路径或重试路径是否出现 Token 黑洞。
-
-## 故障前后对比（面试填空）
-
-仓库根目录 **`../docs/interview/FAULT_BEFORE_AFTER_TEMPLATE.md`**：按 `chaos_compare_latest.md` 填指标与一句话结论，方便答辩复述。
 
 ## 说明
 - 当前版本默认使用规则规划器（`rule`）+ 真实工具客户端调用。

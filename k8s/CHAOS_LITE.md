@@ -1,6 +1,6 @@
 # K8s 与轻量混沌（可选学习路径）
 
-> **Compose、端口、CI 主路径**见 [`../docs/AI_PROJECT_CONTEXT.md`](../docs/AI_PROJECT_CONTEXT.md)；本文不重复。
+> Compose 主路径、端口与 CI 流程见仓库根 `README.md`；本文不重复。
 
 与 **Docker Compose 主路径、CI 默认流程** 独立；用于本地理解 Deployment/Service、探针与简单故障脚本。
 
