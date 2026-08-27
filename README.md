@@ -101,7 +101,7 @@ python agent-eval/scripts/chaos_compare.py --strict   # 无故障 vs 混故障�
 
 | 工作流 | 职责 |
 |---|---|
-| `ci.yml` | lint + 类型检查 + 测试 + Docker 构建 |
+| `ci.yml` | 核心测试 + AI 评估门禁 + Docker 构建 |
 | `qa.yml` | 压测 → 安全扫描 → 混沌对照 → 统一门禁 → 摘要（覆盖率门槛 85%） |
 | `ai-quality.yml` | AI 评估门禁，Quality Gate 未通过阻塞 PR |
 | `supply-chain.yml` | pip-audit / SBOM / Trivy；夜间 mutmut 变异测试 |

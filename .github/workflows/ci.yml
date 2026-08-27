@@ -25,17 +25,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-ai.txt
-          pip install pytest pytest-html --break-system-packages
+          pip install pytest pytest-html httpx --break-system-packages
 
       - name: Run core tests
-        run: >
-          pytest tests/deployment/
-          tests/core_platform/
-          tests/test_llm_types.py
-          --html=reports/pytest-report.html
-          --self-contained-html
-          --tb=short
-          -q
+        run: |
+          mkdir -p reports
+          pytest tests/deployment/ \
+            tests/core_platform/ \
+            tests/test_llm_types.py \
+            --html=reports/pytest-report.html \
+            --self-contained-html \
+            --junitxml=reports/pytest-report.xml \
+            --tb=short \
+            -q
 
       - name: Upload pytest HTML report
         if: always()
@@ -69,7 +71,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-ai.txt
-          pip install pytest --break-system-packages
+          pip install pytest httpx --break-system-packages
 
       - name: AI Security Tests
         run: |
@@ -82,11 +84,20 @@ jobs:
           echo "=== Runtime Security Tests ==="
           pytest tests/core_platform/test_sec_runtime_security.py -v --tb=short -q
 
+      - name: Agent Eval (offline rule mode)
+        env:
+          AGENT_MODE: rule
+          SKIP_TOOLS_HEALTH_CHECK: "1"
+        run: |
+          python agent-eval/scripts/run_agent_eval.py
+          python agent-eval/scripts/score_agent_eval.py
+
       - name: AI Evaluation (Regression)
         run: |
           echo "=== Evaluation Engine Tests ==="
           pytest tests/core_platform/test_eval_engine.py tests/core_platform/test_eval_evaluator.py tests/core_platform/test_eval_gate.py tests/core_platform/test_eval_result.py tests/core_platform/test_eval_metrics.py tests/core_platform/test_eval_regression.py tests/core_platform/test_eval_dataset.py -v --tb=short -q
           echo "=== Generate Evaluation Report ==="
+          mkdir -p reports
           python scripts/generate_evaluation_report.py \
             --raw agent-eval/reports/agent_raw_latest.json \
             --output reports/evaluation-report.json
