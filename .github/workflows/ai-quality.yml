@@ -2,6 +2,8 @@ name: AI Quality Pipeline
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: ["**"]
   schedule:
     - cron: "0 2 * * *"   # 02:00 UTC daily
 
@@ -21,8 +23,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-ai.txt pytest --break-system-packages
+          python -m pip install --upgrade pip --break-system-packages
+          pip install -r requirements.txt -r requirements-ai.txt pytest httpx --break-system-packages
 
       - name: Prompt Injection Detection
         run: |
@@ -93,8 +95,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-ai.txt pytest --break-system-packages
+          python -m pip install --upgrade pip --break-system-packages
+          pip install -r requirements.txt -r requirements-ai.txt pytest httpx --break-system-packages
 
       - name: Run Evaluation Engine Tests
         run: |
@@ -106,9 +108,18 @@ jobs:
           echo ">>> Running observability tests..."
           pytest tests/core_platform/test_obs_trace.py tests/core_platform/test_obs_span.py tests/core_platform/test_obs_event.py tests/core_platform/test_obs_metrics.py tests/core_platform/test_obs_collector.py tests/core_platform/test_obs_runtime_trace.py -v --tb=long -q
 
+      - name: Agent Eval (offline rule mode)
+        env:
+          AGENT_MODE: rule
+          SKIP_TOOLS_HEALTH_CHECK: "1"
+        run: |
+          python agent-eval/scripts/run_agent_eval.py
+          python agent-eval/scripts/score_agent_eval.py
+
       - name: Generate AI Evaluation Report
         run: |
           echo ">>> Generating real evaluation report..."
+          mkdir -p reports
           python scripts/generate_evaluation_report.py \
             --raw agent-eval/reports/agent_raw_latest.json \
             --output reports/evaluation-report.json
