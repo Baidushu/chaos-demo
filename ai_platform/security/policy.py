@@ -127,7 +127,8 @@ class SecurityPolicy:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SecurityPolicy":
-        _default = cls.__dataclass_fields__["prompt_injection_patterns"].default_factory()
+        factory = cls.__dataclass_fields__["prompt_injection_patterns"].default_factory
+        _default = factory() if callable(factory) else []
         return cls(
             max_input_length=int(data.get("max_input_length", 4096)),
             min_input_length=int(data.get("min_input_length", 1)),

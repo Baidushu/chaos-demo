@@ -63,7 +63,9 @@ class LegacyToolAdapter(BaseTool):
         raise RuntimeError(f"Unsupported legacy tool: {self.name}")
 
     def _execute_place_order(self, params: dict[str, Any]) -> ToolExecutionResult:
-        res = self._action(
+        action = self._action
+        assert action is not None, f"Legacy tool action missing: {self.name}"
+        res = action(
             item_name=params.get("item_name", ""),
             quantity=int(params.get("quantity", 1)),
             address=params.get("address", ""),
@@ -75,7 +77,7 @@ class LegacyToolAdapter(BaseTool):
         while (not res.get("ok")) and current_try < self._max_retry:
             current_try += 1
             retry_count += 1
-            res = self._action(
+            res = action(
                 item_name=params.get("item_name", ""),
                 quantity=int(params.get("quantity", 1)),
                 address=params.get("address", ""),
@@ -101,7 +103,9 @@ class LegacyToolAdapter(BaseTool):
         )
 
     def _execute_query_order(self, params: dict[str, Any]) -> ToolExecutionResult:
-        res = self._action(order_id=params.get("order_id", ""))
+        action = self._action
+        assert action is not None, f"Legacy tool action missing: {self.name}"
+        res = action(order_id=params.get("order_id", ""))
         return ToolExecutionResult(
             tool=self.name,
             ok=bool(res.get("ok")),
@@ -115,7 +119,9 @@ class LegacyToolAdapter(BaseTool):
         )
 
     def _execute_cancel_order(self, params: dict[str, Any]) -> ToolExecutionResult:
-        res = self._action(order_id=params.get("order_id", ""))
+        action = self._action
+        assert action is not None, f"Legacy tool action missing: {self.name}"
+        res = action(order_id=params.get("order_id", ""))
         return ToolExecutionResult(
             tool=self.name,
             ok=bool(res.get("ok")),

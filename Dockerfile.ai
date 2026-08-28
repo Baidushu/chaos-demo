@@ -39,7 +39,7 @@ COPY --from=builder /install /usr/local
 
 # Copy application code
 COPY ai_platform_api.py .
-COPY ai/ ./ai/
+COPY ai_platform/ ./ai_platform/
 
 # Create directory for structured logs
 RUN mkdir -p /var/log/ai-platform && chown -R aiplatform:aiplatform /var/log/ai-platform /app

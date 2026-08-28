@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeGuard, cast
 
 from ai_platform.agent.context import AgentContext, agent_context
 from ai_platform.agent.state import AgentState
@@ -13,7 +13,7 @@ from ai_platform.observability.trace import SpanStatus, TraceContext
 from ai_platform.security.guard import SecurityGuard
 from ai_platform.security.policy import SecurityPolicy
 from ai_platform.security.security_event import SecurityEvent
-from ai_platform.workflow.node import Node
+from ai_platform.workflow.node import BaseNode, Node
 from ai_platform.workflow.engine import WorkflowEngine
 
 
@@ -158,7 +158,8 @@ class AgentRuntime:
             return workflow(state)
 
         result: AgentState | Any | None = state
-        for step in workflow:  # type: ignore[assignment]
+        steps = cast("Iterable[WorkflowStep]", workflow)
+        for step in steps:
             result = self._run_step(step, state if result is None else result, context)
             if isinstance(result, AgentState):
                 state = result
@@ -173,9 +174,16 @@ class AgentRuntime:
         if self._is_node_like(step):
             if hasattr(step, "execute"):
                 return step.execute(state, context)
-            return step.run(state)
-        return step(state)
+            return cast("BaseNode", step).run(state)
+        # 注：TypeGuard 对 Protocol 不执行负向收窄（结构性类型补集不明确），
+        # 此处显式 cast——运行时 _is_node_like 为 False 即纯 callable。
+        return cast("Callable[[AgentState], AgentState | None]", step)(state)
 
     @staticmethod
-    def _is_node_like(obj: Any) -> bool:
+    def _is_node_like(obj: Any) -> TypeGuard[Node]:
+        """Node 判定：带 name 且具备 execute/run 之一（TypeGuard 供 mypy 收窄）。
+
+        对「有 run+name 但无 execute」的对象在类型上视为 Node（Protocol 声明
+        execute），运行时由 _run_step 的 hasattr 分支兜底走 run。
+        """
         return (hasattr(obj, "execute") or hasattr(obj, "run")) and hasattr(obj, "name")
