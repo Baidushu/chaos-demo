@@ -1,4 +1,4 @@
-name: qa-pipeline
+﻿name: qa-pipeline
 
 on:
   push:
@@ -23,8 +23,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          python -m pip install --upgrade pip --break-system-packages
+          pip install -r requirements-dev.txt -r requirements-ai.txt --break-system-packages
 
       - name: Ruff
         run: ruff check app
@@ -60,8 +60,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          python -m pip install --upgrade pip --break-system-packages
+          pip install -r requirements-dev.txt -r requirements-ai.txt --break-system-packages
 
       - name: Pytest (full with coverage)
         run: >
@@ -94,8 +94,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          python -m pip install --upgrade pip --break-system-packages
+          pip install -r requirements-dev.txt -r requirements-ai.txt --break-system-packages
 
       - name: Pytest (integration + chaos + e2e)
         run: >
