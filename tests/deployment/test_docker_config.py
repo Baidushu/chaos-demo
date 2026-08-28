@@ -53,7 +53,7 @@ class TestDockerfileContent:
 
     def test_dockerfile_copies_ai_module(self):
         content = (PROJECT_ROOT / "Dockerfile.ai").read_text(encoding="utf-8")
-        assert "ai/" in content, "Must copy the ai module"
+        assert "ai_platform" in content, "Must copy the ai_platform module"
 
     def test_dockerfile_exposes_port_8000(self):
         content = (PROJECT_ROOT / "Dockerfile.ai").read_text(encoding="utf-8")
