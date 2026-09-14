@@ -15,6 +15,14 @@ services:
       - INVENTORY_BUSY_PROB=0.025 #库存繁忙概率
       - ORDER_TTL_SEC=604800 #订单超时时间
       - CIRCUIT_PROBE_TTL_SEC=30 #熔断探针超时时间
+      # 管理接口鉴权：留空=不鉴权（本地演示零配置，启动打告警）；
+      # 在 .env 里设 CHAOS_ADMIN_TOKEN=xxx 即开启——/fault/*、/chaos/* 写操作需带
+      # X-Chaos-Admin-Token 头，详见 README「韧性治理」一节
+      - CHAOS_ADMIN_TOKEN=${CHAOS_ADMIN_TOKEN:-}
+      # 代理头信任：默认不采信 X-Forwarded-For（可伪造 → 限流维度可被绕过）；
+      # 前面确有 N 层受控代理时才设 TRUST_PROXY_HEADERS=true + XFF_TRUSTED_HOPS=N
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
+      - XFF_TRUSTED_HOPS=${XFF_TRUSTED_HOPS:-1}
     cap_add:
       - NET_ADMIN #允许修改网络配置,赋予了容器修改网络堆栈的权限 tc
     depends_on:
@@ -29,6 +37,7 @@ services:
       - ENABLE_RESILIENCE=false
       - ORDER_TTL_SEC=604800
       - CIRCUIT_PROBE_TTL_SEC=30
+      - CHAOS_ADMIN_TOKEN=${CHAOS_ADMIN_TOKEN:-}
     depends_on:
       - redis
   redis:

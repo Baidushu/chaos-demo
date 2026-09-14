@@ -6,6 +6,7 @@ from pathlib import Path
 from flask import Flask
 
 from app.api import (
+    register_admin_guard,
     register_chaos_routes,
     register_error_handlers,
     register_hooks,
@@ -56,6 +57,7 @@ def build_application() -> tuple[Flask, AppRuntime]:
     register_error_handlers(flask_app)
     register_metrics_hooks(flask_app, runtime)
     register_hooks(flask_app, runtime)
+    register_admin_guard(flask_app, runtime)
     register_order_routes(flask_app, runtime)
     register_chaos_routes(flask_app, runtime)
     register_observability_routes(flask_app, runtime)

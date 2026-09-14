@@ -3,6 +3,9 @@
 用法（服务需已启动）：
     python fault_demo.py [--base-url http://localhost:5000]
 
+若服务端设置了 `CHAOS_ADMIN_TOKEN`（管理接口鉴权），本脚本会自动读取同名环境变量
+并带上 `X-Chaos-Admin-Token` 请求头；未设置时按"鉴权未开启"处理。
+
 演示流程：
     1. 正常请求（基线）
     2. 注入延迟故障 → 观察延迟上升
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import time
 import urllib.error
@@ -22,11 +26,29 @@ from pathlib import Path
 
 REPORT_PATH = Path("reports/fault_demo_latest.json")
 
+ADMIN_TOKEN_ENV = "CHAOS_ADMIN_TOKEN"
+ADMIN_TOKEN_HEADER = "X-Chaos-Admin-Token"
 
-def request(base_url: str, method: str, path: str, body: dict | None = None) -> dict:
+
+def admin_headers() -> dict:
+    """服务端开启了管理接口鉴权时，带上令牌头。"""
+    token = os.getenv(ADMIN_TOKEN_ENV, "").strip()
+    return {ADMIN_TOKEN_HEADER: token} if token else {}
+
+
+def request(
+    base_url: str,
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    admin: bool = False,
+) -> dict:
     url = f"{base_url}{path}"
     data = json.dumps(body).encode() if body else None
     headers = {"Content-Type": "application/json"}
+    if admin:
+        headers.update(admin_headers())
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     start = time.perf_counter()
     try:
@@ -67,8 +89,19 @@ def send_batch(base_url: str, n: int = 10) -> dict:
     }
 
 
+def _call_admin(base_url: str, path: str, body: dict | None = None) -> dict:
+    """调用管理接口；401 时给出明确提示（而不是静默失败让人以为脚本坏了）。"""
+    result = request(base_url, "POST", path, body, admin=True)
+    if result["status"] == 401:
+        print(
+            f"  [401] 管理接口需要鉴权：请设置环境变量 {ADMIN_TOKEN_ENV} "
+            f"（与服务端一致），请求头 {ADMIN_TOKEN_HEADER}"
+        )
+    return result
+
+
 def inject_fault(base_url: str, fault_type: str, params: dict, ttl_sec: int = 30):
-    request(base_url, "POST", "/fault/inject", {
+    _call_admin(base_url, "/fault/inject", {
         "type": fault_type,
         "params": params,
         "ttl_sec": ttl_sec,
@@ -76,7 +109,7 @@ def inject_fault(base_url: str, fault_type: str, params: dict, ttl_sec: int = 30
 
 
 def clear_faults(base_url: str):
-    request(base_url, "POST", "/fault/clear-all")
+    _call_admin(base_url, "/fault/clear-all")
 
 
 def main():

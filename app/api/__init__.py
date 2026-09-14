@@ -1,9 +1,11 @@
+from .admin_auth import register_admin_guard
 from .chaos_controller import register_routes as register_chaos_routes
 from .hooks import register_error_handlers, register_hooks
 from .observability_controller import register_routes as register_observability_routes
 from .order_controller import register_routes as register_order_routes
 
 __all__ = [
+    "register_admin_guard",
     "register_chaos_routes",
     "register_error_handlers",
     "register_hooks",

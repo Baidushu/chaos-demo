@@ -174,6 +174,8 @@ POST /fault/inject  {"type": "latency|exception|drop|slow_db", "params": {...}, 
 POST /fault/clear   {"type": "latency"}
 POST /fault/clear-all
 GET  /fault/status
+（写操作在服务端设置 CHAOS_ADMIN_TOKEN 后需带请求头 X-Chaos-Admin-Token；
+  只读的 /fault/status 不需要）
 
 已有的测试覆盖：
 - 正常下单、幂等回放、幂等冲突、并发幂等

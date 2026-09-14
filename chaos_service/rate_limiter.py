@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -254,11 +255,52 @@ def build_rate_limiter(ctx, rule: RateLimitRule | None = None) -> RateLimiter:
     return RateLimiter(active_rule, backend, metrics)
 
 
+def trust_proxy_headers() -> bool:
+    """是否信任 `X-Forwarded-For`（默认**不信任**）。"""
+    return os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def trusted_hop_count() -> int:
+    """可信代理层数（`XFF_TRUSTED_HOPS`，默认 1，最小 1）。"""
+    raw = os.getenv("XFF_TRUSTED_HOPS", "").strip()
+    try:
+        hops = int(raw)
+    except (TypeError, ValueError):
+        hops = 1
+    return max(1, hops)
+
+
+def client_ip_from_request(request) -> str:
+    """解析限流维度使用的客户端 IP。
+
+    默认**忽略** `X-Forwarded-For`：该头由调用方自行填写，无条件采信等于让限流
+    维度可被任意伪造（攻击者每次换个假 IP 就能绕过限流）——这是限流被绕过的经典成因。
+
+    只有显式开启 `TRUST_PROXY_HEADERS` 时才采信，并按 `XFF_TRUSTED_HOPS`
+    （默认 1，表示"我自己前面有 N 层受控代理"）**从右往左**取第 N 跳：
+    `XFF` 是逐跳追加的，最右侧才是最后一层代理真实看到的地址，最左侧可被伪造。
+    跳数不足时退回 `remote_addr`（不猜、不采信）。
+    """
+    remote = request.remote_addr or "unknown"
+    if not trust_proxy_headers():
+        return remote
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+    if not hops:
+        return remote
+    index = len(hops) - trusted_hop_count()
+    if index < 0:
+        return remote
+    return hops[index] or remote
+
+
 def resolve_subject_id(request, dimension: str) -> str:
-    """Maps the configured dimension to an identifier from the HTTP request."""
+    """Maps the configured dimension to an identifier from the HTTP request.
+
+    - `client_ip`：按 `client_ip_from_request` 的代理头信任策略解析；
+    - 其它维度：本仓库暂无对应身份提取逻辑（没有 `X-User-Id` 之类的映射），
+      退回 `remote_addr`——**不再**读取可伪造的 `X-Forwarded-For`。
+    """
     if dimension == "client_ip":
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            return forwarded.split(",")[0].strip() or "unknown"
-        return request.remote_addr or "unknown"
-    return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
+        return client_ip_from_request(request)
+    return request.remote_addr or "unknown"

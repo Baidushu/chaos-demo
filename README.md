@@ -30,6 +30,8 @@
 
 - **韧性治理**：滑动/固定窗口限流（Redis ZSET + Lua 原子）、熔断器（三态 + 半开探测互斥）、幂等（`X-Idempotency-Key`，200 回放 / 202 处理中 / 409 冲突）、端到端超时预算（超时 202 降级排队）、指数退避 + jitter 重试
 - **可编程故障注入**：`POST /fault/inject` 在线注册 `latency / exception / drop / slow_db` 四类故障，Redis 存储 + TTL 自动恢复
+- **管理接口鉴权**：`/fault/*`、`/chaos/*` 写操作支持令牌鉴权（`CHAOS_ADMIN_TOKEN` + `X-Chaos-Admin-Token`，常量时间比较）；未配置令牌时放行但**启动即告警**，只读接口保持公开。前缀 + 方法级守卫让新增写接口默认受保护（fail-closed）
+- **限流维度防伪造**：默认**不采信** `X-Forwarded-For`（可被调用方任意伪造 → 换 IP 即可绕过限流）；确有受控代理时才开启 `TRUST_PROXY_HEADERS`，并按 `XFF_TRUSTED_HOPS` 从右往左取可信跳数，丢弃最左侧伪造值
 - **A/B 对照**：同镜像不同配置（5000 韧性全开 / 5001 无韧性），压测验证过载保护
 
 ### 质量保障层：AI Platform
@@ -137,5 +139,6 @@ chaos-demo/
 
 - 单机教学量级：压测为单机短连接，无真实流量
 - 故障注入为应用内协作式模拟，不等价网络层 `tc` / 杀 Pod
+- 管理接口鉴权默认**未开启**（本地演示零配置的取舍）：生产部署须设 `CHAOS_ADMIN_TOKEN`；服务启动时会打 WARNING 提示当前状态
 - 存储仅 Redis（MySQL 仅为 compose 占位）
 - agent-eval 为小样本辅线（78 条），评测机制与行业 golden set 同构
