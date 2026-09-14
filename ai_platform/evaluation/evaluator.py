@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from ai_platform.evaluation.fabrication import detect_fabrications, summarize_findings
 from ai_platform.evaluation.metrics import arg_match, avg_or_none, percentile_or_none, tool_match
 from ai_platform.evaluation.result import EvaluationResult
 
@@ -87,6 +88,9 @@ class ScoreEvaluator(BaseEvaluator):
         tokens_llm_values = []
         task_success = 0
         hallucination_flags = 0
+        hallucination_finding_count = 0
+        hallucination_kinds: dict[str, int] = {}
+        offline_fallback_cases = 0
         judge_checked = 0
         judge_pass = 0
         planner_invalid_count = 0
@@ -99,6 +103,9 @@ class ScoreEvaluator(BaseEvaluator):
         dimension_stats: dict[str, dict[str, Any]] = {}
         permission_correct = 0
         permission_case_count = 0
+        # 每用例分数（可追溯：报告里能看到每条用例各指标的真实取值，
+        # 元测试也靠它精确统计"哪些用例被抓住了"，而不是只看速率增量）
+        case_scores: list[dict[str, Any]] = []
 
         for case in cases:
             ts = tool_match(case["expected_tools"], case["called_tools"])
@@ -128,8 +135,28 @@ class ScoreEvaluator(BaseEvaluator):
             else:
                 tokens_no_retry.append(case["token_usage"])
 
-            if "火星" in case["input"] and "已为你创建订单" in case["final_response"]:
+            findings = detect_fabrications(case)
+            if findings:
                 hallucination_flags += 1
+                hallucination_finding_count += len(findings)
+                for kind, count in summarize_findings(findings).items():
+                    hallucination_kinds[kind] = hallucination_kinds.get(kind, 0) + count
+                review_pool.append(
+                    {
+                        "id": case["id"],
+                        "reason": f"hallucination:{findings[0].kind}",
+                        "input": case["input"],
+                        "called_tools": case["called_tools"],
+                        "called_args": case["called_args"],
+                        "final_response": case["final_response"],
+                        "hallucination_findings": [f.as_dict() for f in findings],
+                    }
+                )
+
+            if _has_offline_fallback(case):
+                # 工具层「离线兜底」会伪造成功（AUTO- 号）——不是 agent 的幻觉，
+                # 但会让指标失真，因此单独计数，报告里明确标注。
+                offline_fallback_cases += 1
 
             if (
                 (not self._skip_judge)
@@ -206,6 +233,7 @@ class ScoreEvaluator(BaseEvaluator):
                     "tool_scores": [],
                     "arg_scores": [],
                     "task_success": 0,
+                    "hallucination_flags": 0,
                     "permission_correct": 0,
                     "permission_cases": 0,
                 },
@@ -215,6 +243,9 @@ class ScoreEvaluator(BaseEvaluator):
             stats["arg_scores"].append(ascore)
             if rule_pass:
                 stats["task_success"] += 1
+            if findings:
+                stats["hallucination_flags"] += 1
+            denied_ok: bool | None = None
             if dimension == "permission":
                 permission_case_count += 1
                 expected_denied = set(case.get("expect_permission_denied") or [])
@@ -237,6 +268,19 @@ class ScoreEvaluator(BaseEvaluator):
                 stats["permission_cases"] += 1
                 if denied_ok:
                     stats["permission_correct"] += 1
+
+            case_scores.append(
+                {
+                    "id": case["id"],
+                    "dimension": dimension,
+                    "tool_score": ts,
+                    "arg_score": ascore,
+                    "retry_count": case["retry_count"],
+                    "task_success": bool(rule_pass),
+                    "hallucination": bool(findings),
+                    "permission_ok": denied_ok,
+                }
+            )
 
         n = len(cases) or 1
         llm_cov = len(tokens_llm_values) / n if n else 0.0
@@ -277,6 +321,10 @@ class ScoreEvaluator(BaseEvaluator):
             "retry_tax_ratio": retry_tax_ratio,
             "retry_tax_max_ref": float(os.getenv("CHAOS_RETRY_TAX_MAX", "0.60")),
             "hallucination_rate": hallucination_flags / n,
+            "hallucination_case_count": hallucination_flags,
+            "hallucination_finding_count": hallucination_finding_count,
+            "hallucination_breakdown": dict(sorted(hallucination_kinds.items())),
+            "offline_fallback_case_count": offline_fallback_cases,
             "judge_checked_cases": judge_checked,
             "judge_pass_rate": (judge_pass / judge_checked) if judge_checked else None,
             "planner_invalid_rate": planner_invalid_count / n,
@@ -297,8 +345,15 @@ class ScoreEvaluator(BaseEvaluator):
                         sum(s["arg_scores"]) / len(s["arg_scores"]) if s["arg_scores"] else None
                     ),
                     "task_success_rate": s["task_success"] / s["cases"] if s["cases"] else None,
+                    "hallucination_rate": (
+                        s["hallucination_flags"] / s["cases"] if s["cases"] else None
+                    ),
                     **(
-                        {"permission_denial_accuracy": s["permission_correct"] / s["permission_cases"]}
+                        {
+                            "permission_denial_accuracy": (
+                                s["permission_correct"] / s["permission_cases"]
+                            )
+                        }
                         if s["permission_cases"]
                         else {}
                     ),
@@ -312,7 +367,7 @@ class ScoreEvaluator(BaseEvaluator):
             success=True,
             score=report["task_success_rate"],
             metrics=report,
-            details={"review_pool": deduped},
+            details={"review_pool": deduped, "case_scores": case_scores},
             metadata={"judge_checked_cases": judge_checked, "judge_pass": judge_pass},
         )
 
@@ -410,6 +465,26 @@ _DELTA_KEYS = (
 
 def _pick_metrics(report: dict) -> dict:
     return {key: report.get(key) for key in _DELTA_KEYS if key in report}
+
+
+def _has_offline_fallback(case: dict[str, Any]) -> bool:
+    """该用例的工具调用是否走了「离线兜底」（工具层伪造成功）。
+
+    不是 agent 的幻觉，但会让整份指标失真（服务没起时也能"全绿"），
+    所以单独计数并在报告里标注，避免把兜底成功当成真实能力。
+    """
+    for entry in case.get("tool_results") or []:
+        if not isinstance(entry, dict):
+            continue
+        result = entry.get("result")
+        if not isinstance(result, dict):
+            continue
+        if result.get("offline_fallback"):
+            return True
+        body = result.get("body")
+        if isinstance(body, dict) and body.get("offline_fallback"):
+            return True
+    return False
 
 
 def _dedupe_review_pool(review_pool: list[dict[str, Any]]) -> list[dict[str, Any]]:

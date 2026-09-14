@@ -101,7 +101,7 @@ jobs:
       - name: Run Evaluation Engine Tests
         run: |
           echo ">>> Running evaluation engine tests..."
-          pytest tests/core_platform/test_eval_engine.py tests/core_platform/test_eval_evaluator.py tests/core_platform/test_eval_gate.py tests/core_platform/test_eval_result.py tests/core_platform/test_eval_metrics.py tests/core_platform/test_eval_regression.py tests/core_platform/test_eval_dataset.py -v --tb=long -q
+          pytest tests/core_platform/test_eval_engine.py tests/core_platform/test_eval_evaluator.py tests/core_platform/test_eval_gate.py tests/core_platform/test_eval_result.py tests/core_platform/test_eval_metrics.py tests/core_platform/test_eval_regression.py tests/core_platform/test_eval_dataset.py tests/core_platform/test_eval_fabrication.py -v --tb=long -q
 
       - name: Run Observability Tests
         run: |
@@ -115,6 +115,11 @@ jobs:
         run: |
           python agent-eval/scripts/run_agent_eval.py
           python agent-eval/scripts/score_agent_eval.py
+
+      - name: Evaluator Meta-Test (indicator validity gate)
+        run: |
+          echo ">>> 指标有效性元测试：注入已知错误，验证指标抓得到、且基线不误报"
+          python agent-eval/scripts/evaluator_selftest.py --gate
 
       - name: Generate AI Evaluation Report
         run: |

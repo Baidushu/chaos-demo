@@ -145,29 +145,48 @@ python agent-eval/scripts/judge_bias.py --limit 4       # 只跑前 4 组，省 
 "评测结果全绿"不等于"Agent 行为正确"——也可能是指标没覆盖到。本脚本用**变异测试思想验证评估器本身**：
 
 ```powershell
-python agent-eval/scripts/evaluator_selftest.py
+python agent-eval/scripts/evaluator_selftest.py          # 出报告
+python agent-eval/scripts/evaluator_selftest.py --gate   # 门禁：不达标 exit 1（CI 已接）
 ```
 
-做法：由 78 条参考用例构造"全对"输入 → 逐类注入已知错误（工具选错/参数错/该问却下单/多一次重试/权限裁决不符/编造订单号）→ 观察指标增量，形成**变异类型 × 指标**敏感度矩阵 + **捕获覆盖率**（注入错误覆盖全部用例时，主指标应变化多少）。
+做法：由 78 条参考用例构造"全对"输入（**含工具真实返回与有依据的回复**，否则幻觉判定无从谈起）→ 逐类注入已知错误 → 观察指标增量，形成**变异类型 × 指标**敏感度矩阵 + **捕获覆盖率**。
 
-产物 `reports/evaluator_selftest_latest.{json,md}`。**实测结果**（78 条用例）：
+**两道防线都进 CI 门禁**：① 不误报——全对基线必须 0 条幻觉命中；② 抓得到——每个门禁变异的捕获覆盖率必须达标，未达标且不在显式盲区清单里的变异直接失败。
 
-| 变异类型 | 主指标 | 捕获覆盖率 |
-|---|---|---|
-| wrong_tool | tool_selection_accuracy | 100% |
-| extra_retry | retry_rate | 100% |
-| deny_mismatch | permission_denial_accuracy | 100% |
-| wrong_arg | arg_accuracy | 87.2% |
-| blind_order | tool_selection_accuracy | 38.5% ⚠️ 弱覆盖 |
-| fabricated_order | hallucination_rate | **2.6%** ⚠️ 弱覆盖 |
+产物 `reports/evaluator_selftest_latest.{json,md}`。**实测结果**（78 条用例，10 类注入）：
 
-**发现的指标盲区（诚实边界）**：幻觉率对"编造订单号"的覆盖率仅 **2.6%**——当前判定硬编码为
-`"火星" in input and "已为你创建订单" in final_response`，只对数据集里那一个特定模式敏感。
-这正是"指标存在 ≠ 指标有效"的实证，改进方向是把幻觉判定改为**规则化事实核对**
-（工具返回的 ID 集合 vs 回复中出现的 ID 集合），而非关键词匹配。
+| 变异类型 | 主指标 | 适用用例 | 捕获覆盖率（用例口径） | 门禁 |
+|---|---|---|---|---|
+| wrong_tool | tool_selection_accuracy | 78 | 100% | ✅ |
+| wrong_arg | arg_accuracy | 78 | 100%（幅度口径 87.2%，被"部分命中"摊薄） | ✅ |
+| blind_order | tool_selection_accuracy | 30 | 100% | ✅ |
+| extra_retry | retry_rate | 78 | 100% | ✅ |
+| deny_mismatch | permission_denial_accuracy | 5 | 100% | ✅ |
+| fabricated_order | hallucination_rate | 78 | 100% | ✅ |
+| unbacked_success_claim | hallucination_rate | 35 | 100% | ✅ |
+| unsupported_status_claim | hallucination_rate | 59 | 100% | ✅ |
+| fabricated_entity（地址捏造） | hallucination_rate | 78 | 0% | 📌 登记盲区 |
+| status_value_mismatch（状态值不符） | hallucination_rate | 19 | 0% | 📌 登记盲区 |
+
+**它抓到过的真实缺陷（2026-09）**：幻觉率曾是硬编码关键词判定
+（`"火星" in input and "已为你创建订单" in final_response`），78 条用例里只有 2 条可能命中——
+注入 `fabricated_order` 的覆盖率仅 **2.6%**。修复为基于工具调用事实的规则判定
+（`ai_platform/evaluation/fabrication.py`）后达到 **100%**：这正是"指标存在 ≠ 指标有效"的实证。
+
+判定规则（三类，全部可解释、逐条带证据）：无依据动作声明（工具全部失败或从未调用却宣称完成）、
+无依据状态断言（没有任何成功查询却断言订单状态）、捏造标识（回复里的订单号在工具返回与调用参数中都不存在）。
+成功按**全部尝试**计算（重试链 `place_order_retry_1` 成功即算达成）——只看首次调用会把"重试成功"误判成幻觉，
+这一点由真实跑批数据校验（78 条零误报）守住。
+
+**已知盲区（刻意保留，见门禁白名单）**：地址等自然语言实体捏造（需实体对齐/NER，规则法误报率高）、
+状态值级不一致（只校验"有没有成功查询"，不对齐查到的状态值）。两者都在报告里显式列出，
+且门禁要求：**新出现的未覆盖类型会让门禁失败**，除非显式登记。
+
 
 ## 说明
 - 当前版本默认使用规则规划器（`rule`）+ 真实工具客户端调用。
 - 当你本地部署 Ollama 后，可切换到 `AGENT_MODE=ollama` 做本地模型规划。
 - 工具客户端优先调用真实接口（下单/查询/取消），接口不可达时会离线兜底，便于本地调试。
+  **兜底成功是工具层伪造的成功**，会让绝对指标失真：报告里用 `offline_fallback_case_count`
+  单独计数（曾观测到 27/78 条走兜底），离线跑批的数字不能当能力证明。
 - `ollama` 模式包含严格 JSON 结构校验，不合法输出会自动降级到 `ask_user` 并进入复核池。

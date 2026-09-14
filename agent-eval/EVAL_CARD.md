@@ -24,9 +24,17 @@
 
 | 评估器 | 机制 | 指标 |
 |---|---|---|
-| ScoreEvaluator | 启发式规则 | `tool_selection_accuracy`、`arg_accuracy`、`retry_rate`、`hallucination_rate`、`planner_invalid_rate`、`permission_denial_accuracy` |
+| ScoreEvaluator | 启发式规则 + 工具事实核对 | `tool_selection_accuracy`、`arg_accuracy`、`retry_rate`、`hallucination_rate`、`planner_invalid_rate`、`permission_denial_accuracy`、`offline_fallback_case_count` |
 | JudgeEvaluator | LLM-as-Judge（二元 PASS/FAIL + 结构化推理，可配采样率） | `judge_pass_rate`、`judge_checked_cases` |
 | RegressionEvaluator | 基线快照 vs 候选，逐指标 delta + 容忍度 | 各指标 delta 与门禁判定 |
+
+**`hallucination_rate` 的口径（2026-09 重写，可解释）**：不再用关键词匹配，而是把回复与**工具调用事实**核对，
+命中即计一条（逐条带 `kind/detail/evidence` 证据，进人工复核池）。三类规则：
+`unbacked_action`（工具全部失败或从未调用却宣称动作完成）、`unsupported_status_claim`（没有任何成功查询却断言订单状态）、
+`fabricated_id`（回复里的订单号在工具返回与调用参数中都不存在）。
+成功按**全部尝试**计算（重试链任一成功即算达成）；**缺少 `tool_results` 时一律不判定**（无法区分真实与捏造，宁漏不误）。
+报告附带 `hallucination_breakdown` 分类明细与逐维幻觉率。判定有效性由元测试门禁守护：
+全对基线 0 误报 + 每类注入 100% 捕获（见 `reports/evaluator_selftest_latest.md`）。
 
 **门禁阈值**（`config/eval_config.yaml` 与 `ai_platform/evaluation/gate.py`）：tool_selection ≥0.70、arg_accuracy ≥0.70、avg_tool_calls ≤10、retry ≤0.30、hallucination ≤0.10、planner_invalid ≤0.10。阈值随业务场景校准，**非行业统一标准**。
 
@@ -39,6 +47,11 @@
 3. **Judge 不可靠**：位置偏置实验（8 组 × 3 轮，deepseek-chat）测得 flip_rate 4.2%(±7.2%)、首位胜率 48.9%(±1.9%)——**样本量不足以判定该模型是否存在位置偏好**，但已证实"Judge 单轮结论不可直接采信"（首轮曾出现 12.5%/56.2% 的偏离，多轮后回落）。工程上需双向判定/多 judge 投票/人工抽检校准。
 4. **token 为启发式估算**：未接真实模型时按提示词长度估算（`TOKEN_METRIC=auto`），接入 Ollama 后可用真实计数。
 5. **规则规划器与 LLM 规划器行为不同**：CI 默认 rule 保证确定性，LLM 模式的结果波动需用 `eval_variance.py` 单独度量。
+6. **幻觉判定有两类登记盲区**：① 地址等自然语言实体捏造（需实体对齐/NER，规则法误报率高，刻意不做）；
+   ② 状态值级不一致（只校验"有没有成功查询"，不对齐查到的状态值）。二者在元测试报告里显式列出，
+   且**新出现的未覆盖类型会让门禁失败**——盲区必须显式登记，不能默默存在。
+7. **工具层离线兜底会伪造成功**：接口不可达时代理层返回 `offline_fallback` 成功（`AUTO-` 号），
+   报告用 `offline_fallback_case_count` 单独计数（曾观测 27/78）；走兜底的跑批数字不能当能力证明。
 
 ## 5. 防污染声明
 

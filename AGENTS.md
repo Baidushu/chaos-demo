@@ -9,7 +9,7 @@
 
 > 叙事口径（重要）：README 偏「AI-Native 双引擎」，但权威文档 `docs/archive/reference/AI_PROJECT_CONTEXT.md` 要求主线讲成「轻量级质量工程平台（QEP）」，`agent-eval/` 只是辅线，不要讲成「AI Agent 主项目」。
 
-**当前阶段**：功能完整、可本地/Docker 运行；70 个测试文件 / 722 用例（本机 Redis 可用时全跑；2 个真 Redis 集成用例无 Redis 时自动 skip；含 hypothesis 状态机属性测试、密钥边界/policy-as-code 测试、schemathesis 契约测试）；4 个 GitHub Actions 工作流（ci / ai-quality / qa / supply-chain）。另有 8 周学习计划（`PROJECT_OWNERSHIP_MASTER_PLAN_V2.md`）与进度记录（`PROJECT_LEARNING_PROGRESS.md`，Phase 2）、面试题库（`learning/秋招知识点治理与面试题库.md`）。
+**当前阶段**：功能完整、可本地/Docker 运行；73 个测试文件 / 785 用例（本机 Redis 可用时全跑；2 个真 Redis 集成用例无 Redis 时自动 skip；含 hypothesis 状态机属性测试、密钥边界/policy-as-code 测试、schemathesis 契约测试）；4 个 GitHub Actions 工作流（ci / ai-quality / qa / supply-chain）。另有 8 周学习计划（`PROJECT_OWNERSHIP_MASTER_PLAN_V2.md`）与进度记录（`PROJECT_LEARNING_PROGRESS.md`，Phase 2）、面试题库（`learning/秋招知识点治理与面试题库.md`）。
 
 ## 二、技术栈
 
@@ -30,7 +30,7 @@
 | `ai_platform/` | 质量保障层包：core/agent/workflow/tools/llm/security（4 层洋葱）/evaluation/observability。 |
 | `chaos_service/` | 被测系统：fault_injection（4 种故障 `/fault/*`）、resilience（breaker/idempotency/limiter/retry）、store（订单/幂等 Redis 语义）、traffic（录制脱敏）、http_api。 |
 | `app/` | 订单业务分层（api/service/repository/infrastructure/config/exceptions/observability），被 chaos_service 复用。 |
-| `agent-eval/` | 辅线：工具调用稳定性评估（datasets/tool_eval.jsonl 78 条四维用例：工具选择/上下文防捏造/权限边界/安全边界 + run/score/gate/chaos_compare/eval_variance/prompt_regression 脚本；权限维度联动 config/security_policy.yaml 的 role 裁决，评分输出含 dimension_breakdown 矩阵与 permission_denial_accuracy 指标）。 |
+| `agent-eval/` | 辅线：工具调用稳定性评估（datasets/tool_eval.jsonl 78 条四维用例：工具选择/上下文防捏造/权限边界/安全边界 + run/score/gate/chaos_compare/eval_variance/prompt_regression 脚本；权限维度联动 config/security_policy.yaml 的 role 裁决，评分输出含 dimension_breakdown 矩阵与 permission_denial_accuracy 指标；`evaluator_selftest.py` 是**指标有效性元测试**（注入已知错误 → 覆盖率门禁，CI 已接 `--gate`）；幻觉判定在 `ai_platform/evaluation/fabrication.py`，基于工具调用事实而非关键词）。 |
 | `demo/` | 三大演示场景 runner（incident_analysis / security_test / regression），进程内装配组件、不起服务可跑。 |
 | `tests/` | 主 pytest 树：conftest（FakeRedis/FailingRedis）、unit/integration/e2e/demo/deployment 分层。 |
 | `scripts/` | 旧版 AI 平台门禁脚本（generate_evaluation_report.py、run_quality_gate.py）+ `dsh.ps1`（DSH 启动器）。 |
@@ -53,7 +53,7 @@
 
 # 测试
 python -m pytest tests/ -q -m smoke          # 冒烟 5 个，约 3 秒
-python -m pytest tests/ -q                    # 全量 722 用例，约 57 秒（本机，确定性通过）
+python -m pytest tests/ -q                    # 全量 785 用例，约 55 秒（本机，确定性通过）
 python -m pytest tests/unit/test_circuit_breaker.py -v
 python -m pytest tests/ -q -k idempotency
 
@@ -108,6 +108,8 @@ python llm_assist.py analyze-report --report reports/benchmark_latest.json
 - **门禁阈值**：`quality_gate.py`（error_rate≤0.05、p99≤450ms、p95 回归倍数≤1.10、unstable≤0.35 等，可 `QUALITY_GATE_*` 环境变量覆盖）；AI 评估 6 阈值（tool_selection_accuracy≥0.70、arg_accuracy≥0.70、avg_tool_calls≤10、retry≤0.30、hallucination≤0.10、planner_invalid≤0.10）见 `ai_platform/evaluation/gate.py` 与 `agent-eval/config/eval_config.yaml`。
 - **门禁脚本分工**：`quality_gate.py`（仅 benchmark+security）→ `unified_quality_gate.py`（+agent_eval，可 `UNIFIED_GATE_SKIP_AGENT=1` 跳过，`UNIFIED_GATE_TREND_ENABLED=1` 开趋势）→ `unified_summary.py`（只读汇总，Gate 失败仍生成）。
 - **门禁失败**：抛 `QualityGateError` / `AgentGateError`，exit 1；统一门禁写 `reports/unified_quality_gate_latest.json`。
+- **指标有效性门禁**（ai-quality.yml 的 `Evaluator Meta-Test` 步骤）：`python agent-eval/scripts/evaluator_selftest.py --gate`。两道防线：① 全对基线 0 条幻觉命中（不误报）；② 每个门禁变异按**用例口径**覆盖率达标（默认 100%）。**未登记的盲区会让门禁失败**——盲区必须写进 `KNOWN_UNCOVERED`（现存两个：地址捏造、状态值不一致）。覆盖率口径注意：速率型指标用「增量幅度」会被部分命中摊薄（wrong_arg 幅度 87.2% 而用例口径 100%），门禁按用例口径（评测器 `details["case_scores"]` 提供每用例分数）。
+- **幻觉判定**（`ai_platform/evaluation/fabrication.py`）：基于工具调用事实的三条规则——无依据动作声明 / 无依据状态断言 / 捏造标识；成功按**全部尝试**算（重试链成功即算达成，否则会把重试成功误判成幻觉）；**缺 `tool_results` 一律不判定**（宁漏不误）。报告含 `hallucination_breakdown`、逐维幻觉率、`offline_fallback_case_count`（工具层离线兜底伪造成功的条数，会让绝对指标失真）。
 - **CI 主链**（qa.yml）：install → pytest smoke → pytest full → compose up → wait healthz → bench → security_scan → chaos_compare --strict → trace_timeline → unified_quality_gate → unified_summary（`if: always()`）。
 - **供应链安全/变异测试**（supply-chain.yml，push/PR 跑前三个 + 夜间跑 mutation）：① `dependency-audit`（pip-audit 扫三份 requirements，有已知漏洞即失败；本地实测零漏洞）→ ② `sbom`（cyclonedx-py 生成 CycloneDX JSON SBOM 产物，本地实测通过）→ ③ `trivy-scan`（fs 扫描 vuln+secret，HIGH/CRITICAL 失败，skip tests/.venc 防哨兵密钥误报）→ ④ `mutation-testing`（mutmut 仅夜间/手动）。**2026-09-14 修复**：此前连续 18 次夜间失败，根因是 `tests/unit/test_experiment_definition.py` 用 `Path(__file__).parents[2]/agent-eval/scripts` 动态 import `run_experiment`，而 mutmut 只把 source_paths+测试拷进 `mutants/`，`agent-eval/` 不在 `also_copy` 里 → mutants 内 pytest 收集期 ModuleNotFoundError → mutmut `failed to collect stats` 秒退（失败步骤仅耗时 5s，可用作同类问题判据）。修复：`also_copy` 补 `agent-eval`，并把已从 mutmut 3.x 移除的 `mutmut junitxml` 换成 `mutmut export-cicd-stats`（产物 `mutants/mutmut-cicd-stats.json` → 拷入 `reports/`），另补 `mkdir -p reports`。**WSL Ubuntu + Python 3.12 + mutmut 3.8.0 实测跑通**：635 变异体，370 killed / 31 no-tests / 234 survived，得分 61.3%（剔除 no-tests），22.8 mutations/s；幸存者集中在 metrics/日志副作用与 tests/unit 未覆盖的 `build_default_rule`/`resolve_subject_id`。配置见 pyproject `[tool.mutmut]`——**`also_copy` 必须覆盖所有被测试按相对路径动态加载的目录**（现有 app/lua/chaos_service/pytest.ini/agent-eval）。
 - **供应链本地命令**：`pip-audit -r requirements.txt -r requirements-ai.txt`；`cyclonedx-py environment -o reports/sbom_runtime.json --output-format JSON --validate`；`mutmut run`（**仅 Linux/WSL/容器，Windows 原生不支持**——原生 Windows 直接提示改用 WSL）。本机 WSL 复现路径（无需 sudo）：`python3 -m venv --without-pip ~/mutvenv` → `get-pip.py` 自举 pip → `pip install -r requirements-dev.txt mutmut` → `tar` 排除 `.venv/.git/mutants/reports` 拷仓库到 `~/mutrepo` → `mutmut run`；`pre-commit run --all-files`（配置 `.pre-commit-config.yaml`，ruff/black 作用域与 CI 一致仅 app/，hygiene hook 全仓）。
