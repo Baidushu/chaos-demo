@@ -98,6 +98,48 @@ python .\agent-eval\scripts\eval_variance.py --runs 5 --chaos mixed --fail-rate 
 
 评分报告中的 **Token by outcome**：按「规则通过/失败」与「是否发生工具重试」拆分平均 `token_usage`，用于观察失败路径或重试路径是否出现 Token 黑洞。
 
+## Judge 可靠性：位置偏置实验
+
+LLM-as-Judge 是行业标准做法，但**评委自身不可靠**（位置偏置、自偏好、长度偏好）。本项目用「成对比较 + 顺序交换」量化位置偏置：
+
+```powershell
+python agent-eval/scripts/judge_bias.py                 # 走 .env 配置的真实模型（如 DeepSeek）
+python agent-eval/scripts/judge_bias.py --provider mock # 离线自检：本地位置无关 stub
+python agent-eval/scripts/judge_bias.py --limit 4       # 只跑前 4 组，省 token
+```
+
+方法：同一对答案按 (A 在前) 与 (B 在前) 各判一次，比较结论是否翻转。产出指标：
+
+| 指标 | 含义 |
+|---|---|
+| `flip_rate` | 顺序交换后结论反转的占比——越高说明判定越依赖位置而非内容 |
+| `first_position_win_rate` | **位置无关口径**的首位胜率（基准 50%），显著偏高即位置偏好 |
+| `reference_accuracy_order{1,2}` | 两种顺序下与人工参考标注的一致率 |
+
+产物 `reports/judge_bias_latest.{json,md}`，建议 `--runs 3` 取多轮聚合（报告含轮间标准差）。
+
+**实测结果**（8 组样本）：
+
+| 模式 | flip_rate | 首位胜率 |
+|---|---|---|
+| mock（位置无关 stub，2 轮） | 0.0% (±0.0%) | 50.0% (±0.0%) —— 恰为基准，证明指标与管道无偏 |
+| 真实模型 deepseek-chat（3 轮） | 4.2% (±7.2%) | 48.9% (±1.9%) |
+
+**方法论结论（比数字更重要）**：
+1. **单轮小样本结论不可引用**——首轮曾测得 flip_rate 12.5%、首位胜率 56.2%，多轮聚合后回落至 4.2% / 48.9%，轮间标准差 7.2pp。看起来像"模型有位置偏好"，实际主要是**采样噪声**。
+2. 因此本实验的正确结论是：**该样本量不足以判定 deepseek-chat 是否存在位置偏好**，但"**Judge 单轮结论不可直接采信**"这一点已被数据证实。
+3. 要得到可信结论需要：扩样本（数十~上百组）、固定温度与提示词版本、多轮聚合看方差——这与 `eval_variance.py` 对 Agent 评估的处理思路一致。
+4. 工程缓解手段（行业做法）：成对比较固定顺序或双向判定取一致、多 judge 投票、人工抽检校准。
+
+## 评测集完整性：防污染声明
+
+- `datasets/tool_eval.jsonl`（78 条）与 `datasets/judge_bias_pairs.jsonl`（8 组）均为**本项目手写**，未从任何公开基准或模型训练语料中摘录。
+- 用例主题限定在本仓库业务域（订单工具调用、韧性机制、评估方法论），**与公开评测集（MMLU/HumanEval/GSM8K 等）无交集**，不存在基准污染。
+- 若未来引入公开基准或真实线上失败案例回流，须在 PR 中标注来源与时间，并优先使用改写变体复测，避免"评测集进训练集"的隐性污染。
+- 评测集与评分脚本同仓版本化：脚本变更走 git diff + CI，报告记录数据集与门禁版本，保证结论可追溯。
+
+详见 `agent-eval/EVAL_CARD.md`（评测卡：对象/方法/指标/限制）。
+
 ## 说明
 - 当前版本默认使用规则规划器（`rule`）+ 真实工具客户端调用。
 - 当你本地部署 Ollama 后，可切换到 `AGENT_MODE=ollama` 做本地模型规划。
