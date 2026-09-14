@@ -87,6 +87,10 @@ jobs:
           # 测试夹具，非真实泄漏；.venv 为本地虚拟环境不入库。
           skip-dirs: tests,.venv,mutants
 
+  # 注意（2026-09 修复）：mutmut 只把 source_paths + 测试拷进 mutants/，其余运行时依赖
+  # 必须列在 pyproject [tool.mutmut] also_copy 里。tests/unit/test_experiment_definition.py
+  # 用 Path(__file__).parents[2]/agent-eval/scripts 动态 import run_experiment，缺 agent-eval
+  # 会在 pytest 收集阶段 ModuleNotFoundError → mutmut "failed to collect stats" 秒退（曾连续 18 次夜间失败）。
   mutation-testing:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -107,9 +111,13 @@ jobs:
 
       - name: Run mutation tests (resilience core)
         run: |
+          mkdir -p reports
           mutmut run
           mutmut results | tee reports/mutmut_results.txt || true
-          mutmut junitxml > reports/mutmut_report.xml || true
+          # mutmut 3.x 移除了 junitxml 子命令（2.x 遗留），改用机器可读统计；
+          # 产物落在 mutants/mutmut-cicd-stats.json，拷到 reports/ 便于统一上传。
+          mutmut export-cicd-stats || true
+          cp mutants/mutmut-cicd-stats.json reports/ 2>/dev/null || true
 
       - name: Mutation score summary
         run: |
@@ -125,4 +133,4 @@ jobs:
           name: mutation-report
           path: |
             reports/mutmut_results.txt
-            reports/mutmut_report.xml
+            reports/mutmut-cicd-stats.json
