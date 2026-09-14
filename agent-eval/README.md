@@ -140,6 +140,32 @@ python agent-eval/scripts/judge_bias.py --limit 4       # 只跑前 4 组，省 
 
 详见 `agent-eval/EVAL_CARD.md`（评测卡：对象/方法/指标/限制）。
 
+## 评测器元测试（指标有效性验证）
+
+"评测结果全绿"不等于"Agent 行为正确"——也可能是指标没覆盖到。本脚本用**变异测试思想验证评估器本身**：
+
+```powershell
+python agent-eval/scripts/evaluator_selftest.py
+```
+
+做法：由 78 条参考用例构造"全对"输入 → 逐类注入已知错误（工具选错/参数错/该问却下单/多一次重试/权限裁决不符/编造订单号）→ 观察指标增量，形成**变异类型 × 指标**敏感度矩阵 + **捕获覆盖率**（注入错误覆盖全部用例时，主指标应变化多少）。
+
+产物 `reports/evaluator_selftest_latest.{json,md}`。**实测结果**（78 条用例）：
+
+| 变异类型 | 主指标 | 捕获覆盖率 |
+|---|---|---|
+| wrong_tool | tool_selection_accuracy | 100% |
+| extra_retry | retry_rate | 100% |
+| deny_mismatch | permission_denial_accuracy | 100% |
+| wrong_arg | arg_accuracy | 87.2% |
+| blind_order | tool_selection_accuracy | 38.5% ⚠️ 弱覆盖 |
+| fabricated_order | hallucination_rate | **2.6%** ⚠️ 弱覆盖 |
+
+**发现的指标盲区（诚实边界）**：幻觉率对"编造订单号"的覆盖率仅 **2.6%**——当前判定硬编码为
+`"火星" in input and "已为你创建订单" in final_response`，只对数据集里那一个特定模式敏感。
+这正是"指标存在 ≠ 指标有效"的实证，改进方向是把幻觉判定改为**规则化事实核对**
+（工具返回的 ID 集合 vs 回复中出现的 ID 集合），而非关键词匹配。
+
 ## 说明
 - 当前版本默认使用规则规划器（`rule`）+ 真实工具客户端调用。
 - 当你本地部署 Ollama 后，可切换到 `AGENT_MODE=ollama` 做本地模型规划。
